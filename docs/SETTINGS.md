@@ -358,6 +358,20 @@
   one assigned to player 2 or later; the choice is saved and restored on reconnect.
   Select it here before recording its bindings in Remap. Remap's "Controller bindings for" selects
   binding profiles, not the controller used to play. Every binding is on **Controls > Remap**, below.
+- DSU controllers (Controls > Controller settings > DSU controllers): pads that
+  another program serves over UDP with the DSU/cemuhook protocol (as Dolphin's DSU
+  client reads it), such as NSO GC Driver, DS4Windows, BetterJoy and phone or Steam
+  Deck apps. `dsu_enabled` (default 1) runs the client, `dsu_server` (default
+  `127.0.0.1:26760`; `host[:port]`, IPv6 in brackets) names the server, and
+  `dsu_layout` (`gamecube`, the default, or `playstation`) says what its pads are.
+  Each connected slot becomes an SDL virtual gamepad named "DSU slot <n>", so it
+  takes a port, is chosen under Remap > Active controller and is remapped like any
+  other pad. `gamecube` presents it as Nintendo's GameCube adapter (the GameCube
+  mapping) and reads NSO GC Driver's buttons: A/B/X/Y as cross/circle/square/
+  triangle, Z as R3, L/R as the analog L2/R2 with the clicks on L1/R1.
+  `playstation` presents a DualShock 4 with the buttons by position. Motion and
+  touch are not read. The client is `platform/port_dsu.cpp`; F1 shows the server's
+  state and each slot's packet rate.
 - **Controls > Remap** lists all devices' bindings together, with keyboard, mouse, controller
   and touch icons. "Controller bindings for" selects all controllers or a controller kind/model
   profile, including saved profiles. Actions are grouped (game buttons,

@@ -28,6 +28,12 @@ int MouseButtonSetting(const std::string& key) {
   return -1;
 }
 
+// A host:port: printable ASCII without spaces.
+bool ValidDsuServer(const std::string& value) {
+  return !value.empty() && value.size() <= kDsuServerMaxLen &&
+         std::all_of(value.begin(), value.end(), [](char c) { return c > ' ' && c < 0x7F; });
+}
+
 float ParseFloat(const std::string& value) { return static_cast< float >(std::atof(value.c_str())); }
 
 // A number, or the value is ignored (atoi would read junk as scancode 0).
@@ -87,6 +93,16 @@ bool ApplySetting(std::string_view keyView, std::string_view valueView) {
     const long v = std::strtol(value.c_str(), nullptr, 10);
     if (v >= 0 && v <= 2) {
       s.gyroSource = static_cast< int >(v);
+    }
+  } else if (key == "dsu_enabled") {
+    s.dsuEnabled = ParseBool(value);
+  } else if (key == "dsu_server") {
+    if (ValidDsuServer(value)) {
+      s.dsuServer = value;
+    }
+  } else if (key == "dsu_layout") {
+    if (value == "gamecube" || value == "playstation") {
+      s.dsuLayout = value == "playstation" ? 1 : 0;
     }
   } else if (key == "gyro_space") {
     const long v = std::strtol(value.c_str(), nullptr, 10);
@@ -322,6 +338,9 @@ void WriteControlSettings(std::ostream& out) {
   }
   out << '\n';
   out << "fast_morph=" << (s.fastMorph ? 1 : 0) << '\n';
+  out << "dsu_enabled=" << (s.dsuEnabled ? 1 : 0) << '\n';
+  out << "dsu_server=" << s.dsuServer << '\n';
+  out << "dsu_layout=" << (s.dsuLayout == 1 ? "playstation" : "gamecube") << '\n';
 }
 
 void WriteGameplaySettings(std::ostream& out) {

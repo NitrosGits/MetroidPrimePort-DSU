@@ -55,6 +55,21 @@ int main() {
   ApplySetting("touch_aim_speed_y", "50");
   ApplySetting("touch_aim_speed_y", "0.1");
   REQUIRE_MSG(Get().touchAimSpeedY == 1.5f, "touch_aim_speed_y range");
+  REQUIRE_MSG(defaults.find("dsu_enabled=1\ndsu_server=127.0.0.1:26760\ndsu_layout=gamecube\n") != std::string::npos,
+              "dsu defaults");
+  REQUIRE_MSG(ApplySetting("dsu_enabled", "0") && !Get().dsuEnabled, "dsu_enabled");
+  REQUIRE_MSG(ApplySetting("dsu_server", "192.168.1.20:26761") && Get().dsuServer == "192.168.1.20:26761",
+              "dsu_server");
+  ApplySetting("dsu_server", "bad host");
+  ApplySetting("dsu_server", "");
+  REQUIRE_MSG(Get().dsuServer == "192.168.1.20:26761", "dsu_server rejects");
+  REQUIRE_MSG(ApplySetting("dsu_layout", "playstation") && Get().dsuLayout == 1, "dsu_layout");
+  ApplySetting("dsu_layout", "xbox");
+  REQUIRE_MSG(Get().dsuLayout == 1, "dsu_layout rejects");
+  REQUIRE_MSG(Text().find("dsu_enabled=0\ndsu_server=192.168.1.20:26761\ndsu_layout=playstation\n") != std::string::npos,
+              "dsu written");
+  ApplySetting("gyro_source", "3");
+  REQUIRE_MSG(Get().gyroSource == 0, "gyro_source has no source 3");
   REQUIRE_MSG(ApplySetting("gyro_split", "1") && Get().gyroSplit, "gyro_split");
   REQUIRE_MSG(ApplySetting("gyro_sensitivity_y", "0.5") && Get().gyroSensitivityY == 0.5f, "gyro_sensitivity_y");
   ApplySetting("gyro_sensitivity_y", "50");

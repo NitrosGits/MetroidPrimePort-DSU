@@ -390,19 +390,19 @@ bool SDLCALL active_input_watch(void*, SDL_Event* event) {
     }
     break;
   case SDL_EVENT_GAMEPAD_BUTTON_DOWN:
-    if (!SDL_IsJoystickVirtual(event->gbutton.which)) {
+    if (!PADIsTouchOverlayJoystick(event->gbutton.which)) {
       sActiveInput.store(ActiveInput::Pad, std::memory_order_relaxed);
     }
     break;
   case SDL_EVENT_GAMEPAD_AXIS_MOTION:
     // The same threshold the touch overlay uses to decide a pad is in use.
     if (std::abs(static_cast< int >(event->gaxis.value)) > 16000 &&
-        !SDL_IsJoystickVirtual(event->gaxis.which)) {
+        !PADIsTouchOverlayJoystick(event->gaxis.which)) {
       sActiveInput.store(ActiveInput::Pad, std::memory_order_relaxed);
     }
     break;
   case SDL_EVENT_GAMEPAD_ADDED:
-    if (!SDL_IsJoystickVirtual(event->gdevice.which)) {
+    if (!PADIsTouchOverlayJoystick(event->gdevice.which)) {
       sActiveInput.store(ActiveInput::Pad, std::memory_order_relaxed);
     }
     break;

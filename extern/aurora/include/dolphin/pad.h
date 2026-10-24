@@ -224,6 +224,10 @@ BOOL PADIsGCAdapter(u32 port);
  * Returns the SDL gamepad for the index into the controller map.
  */
 struct SDL_Gamepad* PADGetSDLGamepadForIndex(u32 index);
+// Whether an SDL joystick id is the port's on-screen touch pad: a virtual gamepad that always uses
+// the default mapping and never takes port 0 from a real pad. DSU network pads are virtual too
+// (named "DSU ...") but count as real controllers.
+BOOL PADIsTouchOverlayJoystick(u32 joystickId);
 /* Returns the first native button which is currently pressed */
 s32 PADGetNativeButtonPressed(u32 port);
 /* Returns the first native axis which is currently pulled halfway or more */

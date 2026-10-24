@@ -216,6 +216,8 @@ set(MP_PORT_SOURCES
     platform/debug_ui/window.cpp
     platform/port_input_settings.cpp
     platform/port_gyro_motion.cpp
+    platform/port_dsu.cpp
+    platform/port_dsu_proto.cpp
     platform/disc.cpp
     platform/shims.cpp
     platform/sdk_stubs.cpp
@@ -1311,6 +1313,9 @@ if(MP_BUILD_TESTS)
         INCLUDES platform/include)
     mp_port_test(port_gyro_motion_tests
         SOURCES tests/port_gyro_motion.cpp platform/port_gyro_motion.cpp
+        INCLUDES platform/include)
+    mp_port_test(port_dsu_tests
+        SOURCES tests/port_dsu.cpp platform/port_dsu_proto.cpp
         INCLUDES platform/include)
     # The Windows renderer choice (issue #135): the names the settings file and
     # MP_GRAPHICS_BACKEND carry, the per-run override that outranks the file, and the

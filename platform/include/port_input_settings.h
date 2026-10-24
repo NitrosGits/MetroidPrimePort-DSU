@@ -34,6 +34,8 @@ constexpr float kGyroSensitivityMin = 0.1f;
 constexpr float kGyroSensitivityMax = 10.f;
 // Gyro smoothing/tightening thresholds, deg/s.
 constexpr float kGyroThresholdMax = 50.f;
+// DSU controllers: the longest server address a settings line keeps.
+constexpr std::size_t kDsuServerMaxLen = 255;
 // Gyro pointer aim: degrees of pad turn that sweep the pointer across the screen.
 constexpr float kGyroCursorAngleMin = 5.f;
 constexpr float kGyroCursorAngleMax = 180.f;
@@ -73,6 +75,11 @@ struct Settings {
   // phone, and how far the camera turns per turn of the pad (1 = the same angle).
   int gyroMode = 0;
   int gyroSource = 0;
+  // DSU controllers (port_dsu.h): the client, its server ("host:port") and what
+  // the server's pads are (PortDsu::Layout).
+  bool dsuEnabled = true;
+  std::string dsuServer = "127.0.0.1:26760";
+  int dsuLayout = 0;
   float gyroSensitivity = 2.f;
   // With gyroSplit on, gyroSensitivityY drives the pad's pitch and gyroSensitivity only the yaw.
   bool gyroSplit = false;

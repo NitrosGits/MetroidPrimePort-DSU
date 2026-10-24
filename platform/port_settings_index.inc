@@ -56,6 +56,8 @@
 {"Controls", "Mouse settings", "Mouse aim", "Weapon buttons", "mouse click fire buttons"},
 {"Controls", "Mouse settings", "Mouse aim", "Crosshair", "reticle aim mouse"},
 {"Controls", "Mouse settings", "Mouse aim", "Size", "crosshair reticle size percent"},
+{"Controls", "Controller settings", "DSU controllers", "Use DSU controllers", "dsu cemuhook udp network controller server nso gamecube gc driver ds4windows betterjoy phone steam deck dolphin"},
+{"Controls", "Controller settings", "DSU controllers", "Controller layout", "dsu gamecube playstation ds4 layout buttons"},
 {"Controls", "Controller settings", "Stick aim", "Twin stick (right stick aims)", "twin stick right stick camera aim"},
 {"Controls", "Controller settings", "Stick aim", "Remastered movement (twin stick and mouse aim)", "remastered movement diagonal twin stick"},
 {"Controls", "Controller settings", "Stick aim", "Stick aim speed", "right stick camera turn speed sensitivity"},

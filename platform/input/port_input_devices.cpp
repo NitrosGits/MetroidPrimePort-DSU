@@ -1,4 +1,5 @@
 #include "port_input_devices.h"
+#include "port_dsu.h"
 
 #include "port_debug.h"
 #include "port_input_map.h"
@@ -856,7 +857,7 @@ std::vector<SPadInfo> ConnectedPads() {
   int count = 0;
   SDL_JoystickID* ids = SDL_GetGamepads(&count);
   for (int i = 0; ids != nullptr && i < count; ++i) {
-    if (SDL_IsJoystickVirtual(ids[i])) continue;
+    if (PADIsTouchOverlayJoystick(ids[i])) continue;
     SPadInfo info;
     char buf[33] = {};
     SDL_GUIDToString(SDL_GetJoystickGUIDForID(ids[i]), buf, sizeof(buf));
@@ -941,7 +942,7 @@ static const SMenuAction* FindMenuAction(Action a, bool menu) {
 static SDL_Gamepad* RealPad() {
   const s32 index = PADGetIndexForPort(kPort);
   SDL_Gamepad* pad = index >= 0 ? PADGetSDLGamepadForIndex(static_cast< u32 >(index)) : nullptr;
-  return pad == nullptr || SDL_IsJoystickVirtual(SDL_GetGamepadID(pad)) ? nullptr : pad;
+  return pad == nullptr || PADIsTouchOverlayJoystick(SDL_GetGamepadID(pad)) ? nullptr : pad;
 }
 
 // The Menu rows' defaults: the pad type's standard mapping (A confirms, B backs
@@ -1137,6 +1138,8 @@ PADStatus Synthesize(const PortInput::Output& out) {
 }
 
 SPoll Poll(unsigned mouseHeld, bool focused) {
+  // DSU pads first: they are SDL virtual gamepads, read like any other below.
+  PortDsu::Update();
   static Profile sProfile;
   static PortInput::Runtime sRuntime;
   static bool sInit = false;
