@@ -34,6 +34,8 @@ constexpr float kGyroSensitivityMin = 0.1f;
 constexpr float kGyroSensitivityMax = 10.f;
 // Gyro smoothing/tightening thresholds, deg/s.
 constexpr float kGyroThresholdMax = 50.f;
+// DSU server: the longest host name a settings line keeps.
+constexpr std::size_t kDsuHostMaxLen = 253;
 // Gyro pointer aim: degrees of pad turn that sweep the pointer across the screen.
 constexpr float kGyroCursorAngleMin = 5.f;
 constexpr float kGyroCursorAngleMax = 180.f;
@@ -70,9 +72,13 @@ struct Settings {
   bool stickAimSplit = false;
   float stickAimRateY = 900.f;
   // Gyro aiming: off / hold to aim / always / hold to pause / toggle to aim, auto / controller /
-  // phone, and how far the camera turns per turn of the pad (1 = the same angle).
+  // phone / DSU server, and how far the camera turns per turn of the pad (1 = the same angle).
   int gyroMode = 0;
   int gyroSource = 0;
+  // The DSU (cemuhook) server gyro source 3 reads, and its pad slot (1-4).
+  std::string dsuHost = "127.0.0.1";
+  int dsuPort = 26760;
+  int dsuSlot = 1;
   float gyroSensitivity = 2.f;
   // With gyroSplit on, gyroSensitivityY drives the pad's pitch and gyroSensitivity only the yaw.
   bool gyroSplit = false;

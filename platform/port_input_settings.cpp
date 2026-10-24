@@ -28,6 +28,12 @@ int MouseButtonSetting(const std::string& key) {
   return -1;
 }
 
+// A host name or address: printable ASCII without spaces.
+bool ValidDsuHost(const std::string& value) {
+  return !value.empty() && value.size() <= kDsuHostMaxLen &&
+         std::all_of(value.begin(), value.end(), [](char c) { return c > ' ' && c < 0x7F; });
+}
+
 float ParseFloat(const std::string& value) { return static_cast< float >(std::atof(value.c_str())); }
 
 // A number, or the value is ignored (atoi would read junk as scancode 0).
@@ -85,8 +91,22 @@ bool ApplySetting(std::string_view keyView, std::string_view valueView) {
     }
   } else if (key == "gyro_source") {
     const long v = std::strtol(value.c_str(), nullptr, 10);
-    if (v >= 0 && v <= 2) {
+    if (v >= 0 && v <= 3) {
       s.gyroSource = static_cast< int >(v);
+    }
+  } else if (key == "dsu_host") {
+    if (ValidDsuHost(value)) {
+      s.dsuHost = value;
+    }
+  } else if (key == "dsu_port") {
+    int v = 0;
+    if (ParseCode(value, v) && v >= 1 && v <= 65535) {
+      s.dsuPort = v;
+    }
+  } else if (key == "dsu_slot") {
+    int v = 0;
+    if (ParseCode(value, v) && v >= 1 && v <= 4) {
+      s.dsuSlot = v;
     }
   } else if (key == "gyro_space") {
     const long v = std::strtol(value.c_str(), nullptr, 10);
@@ -340,6 +360,9 @@ void WriteAimSettings(std::ostream& out) {
   out << "stick_aim_rate_y=" << s.stickAimRateY << '\n';
   out << "gyro_mode=" << s.gyroMode << '\n';
   out << "gyro_source=" << s.gyroSource << '\n';
+  out << "dsu_host=" << s.dsuHost << '\n';
+  out << "dsu_port=" << s.dsuPort << '\n';
+  out << "dsu_slot=" << s.dsuSlot << '\n';
   out << "gyro_sensitivity=" << s.gyroSensitivity << '\n';
   out << "gyro_split=" << (s.gyroSplit ? 1 : 0) << '\n';
   out << "gyro_sensitivity_y=" << s.gyroSensitivityY << '\n';

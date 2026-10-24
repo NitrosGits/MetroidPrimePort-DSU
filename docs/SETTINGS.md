@@ -137,7 +137,13 @@
   the view. With pointer aim and gyro on, the twin-stick look
   stick and keyboard look keys turn the camera as without pointer aim while the
   gyro moves the pointer.
-  `gyro_source` is 0 auto, 1 controller, 2 phone. `gyro_sensitivity` (0.1-10,
+  `gyro_source` is 0 auto, 1 controller, 2 phone, 3 DSU server: motion over
+  the cemuhook/DSU UDP protocol (as Dolphin's DSU client reads it) from a phone
+  app, BetterJoy, DS4Windows, SteamDeckGyroDSU and the like, so a pad without a
+  gyro (a GameCube controller) can aim by motion while it keeps the buttons and
+  sticks. `dsu_host` (default 127.0.0.1), `dsu_port` (default 26760) and
+  `dsu_slot` (1-4, default 1) pick the server and its controller; F1 shows the
+  connection. The client only runs while source 3 and gyro aim or flicks are on. `gyro_sensitivity` (0.1-10,
   default 2) is camera angle per pad angle: 1 turns the camera as far as the pad
   turned. It ignores the mouse sensitivity and invert. An older `gyro_rate` (aim
   pixels per rad/s, which also scaled with the mouse sensitivity) is read once as

@@ -88,7 +88,8 @@
 {"Controls", "Touch & gyro", "Touch controls", "Edit layout", "drag move touch layout position"},
 #endif
 {"Controls", "Touch & gyro", "Gyro aim", "Mode", "gyro tilt aim hold mode ratchet pause toggle"},
-{"Controls", "Touch & gyro", "Gyro aim", "Source", "gyro device pad phone motion sensor"},
+{"Controls", "Touch & gyro", "Gyro aim", "Source", "gyro device pad phone motion sensor dsu cemuhook udp server gamecube betterjoy ds4windows"},
+{"Controls", "Touch & gyro", "Gyro aim", "Slot", "dsu cemuhook server port address ip controller slot"},
 {"Controls", "Touch & gyro", "Gyro aim", "Sensitivity", "gyro speed sensitivity aim natural real world scale"},
 {"Controls", "Touch & gyro", "Gyro aim", "Separate vertical speed", "horizontal vertical split gyro sensitivity"},
 {"Controls", "Touch & gyro", "Gyro aim", "Vertical sensitivity", "gyro vertical up down pitch sensitivity"},

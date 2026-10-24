@@ -4,6 +4,7 @@
 #include "debug_ui_internal.h"
 
 #include "port_debug.h"
+#include "port_dsu.h"
 #include "port_gyro_motion.h"
 #include "port_pointer.h"
 #include "port_apclient.h"
@@ -25,6 +26,7 @@
 #include <algorithm>
 #include <atomic>
 #include <cmath>
+#include <cstdio>
 
 namespace PortDebug {
 
@@ -426,10 +428,44 @@ void DrawControlsTouchGyro() {
            "twin stick or the touch "
            "controls (not the classic layout).");
   ImGui::BeginDisabled(sInput.gyroMode == 0 && !sInput.springFlick);
-  const char* gyroSources[] = {"Auto", "Controller", "Phone"};
+  const char* gyroSources[] = {"Auto", "Controller", "Phone", "DSU server"};
   int gyroSource = sInput.gyroSource;
-  if (ImGui::Combo("Source", &gyroSource, gyroSources, 3)) {
+  if (ImGui::Combo("Source", &gyroSource, gyroSources, IM_ARRAYSIZE(gyroSources))) {
     SetGyroSource(gyroSource);
+  }
+  ItemHelp("DSU server: motion from a cemuhook/DSU server (a phone app, BetterJoy, DS4Windows, "
+           "SteamDeckGyroDSU...) for a pad without a gyro, such as a GameCube controller. The pad "
+           "still does the buttons and sticks.");
+  if (sInput.gyroSource == 3) {
+    // Edited in a buffer and taken on Enter or leaving the field, so a half
+    // typed name doesn't restart the client on every key.
+    static char sDsuHost[PortInput::kDsuHostMaxLen + 1] = {};
+    static bool sDsuHostEditing = false;
+    if (!sDsuHostEditing) {
+      std::snprintf(sDsuHost, sizeof(sDsuHost), "%s", sInput.dsuHost.c_str());
+    }
+    ImGui::InputText("Server##dsu", sDsuHost, sizeof(sDsuHost), ImGuiInputTextFlags_CharsNoBlank);
+    sDsuHostEditing = ImGui::IsItemActive();
+    if (ImGui::IsItemDeactivated() && sDsuHost[0] != '\0' && sInput.dsuHost != sDsuHost) {
+      sInput.dsuHost = sDsuHost;
+      MarkDirty();
+    }
+    ItemHelp("The DSU server's address: 127.0.0.1 for one on this computer, or the phone's IP "
+             "address shown by its DSU app.");
+    int dsuPort = sInput.dsuPort;
+    if (ImGui::InputInt("Port##dsu", &dsuPort, 0, 0) && dsuPort >= 1 && dsuPort <= 65535) {
+      sInput.dsuPort = dsuPort;
+      MarkDirty();
+    }
+    ItemHelp("26760 unless the server says otherwise.");
+    int dsuSlot = sInput.dsuSlot - 1;
+    const char* dsuSlots[] = {"1", "2", "3", "4"};
+    if (ImGui::Combo("Slot##dsu", &dsuSlot, dsuSlots, IM_ARRAYSIZE(dsuSlots))) {
+      sInput.dsuSlot = dsuSlot + 1;
+      MarkDirty();
+    }
+    ItemHelp("Which of the server's controllers to read; the first is 1.");
+    ImGui::Text("Server: %s", PortDsu::Status().c_str());
   }
   ImGui::Text("Gyro: %s", GyroStatus());
   ImGui::EndDisabled();

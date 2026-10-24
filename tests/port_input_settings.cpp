@@ -55,6 +55,24 @@ int main() {
   ApplySetting("touch_aim_speed_y", "50");
   ApplySetting("touch_aim_speed_y", "0.1");
   REQUIRE_MSG(Get().touchAimSpeedY == 1.5f, "touch_aim_speed_y range");
+  REQUIRE_MSG(defaults.find("gyro_source=0\ndsu_host=127.0.0.1\ndsu_port=26760\ndsu_slot=1\n") != std::string::npos,
+              "dsu defaults");
+  REQUIRE_MSG(ApplySetting("gyro_source", "3") && Get().gyroSource == 3, "gyro_source dsu");
+  ApplySetting("gyro_source", "4");
+  REQUIRE_MSG(Get().gyroSource == 3, "gyro_source above range");
+  REQUIRE_MSG(ApplySetting("dsu_host", "192.168.1.20") && Get().dsuHost == "192.168.1.20", "dsu_host");
+  ApplySetting("dsu_host", "bad host");
+  ApplySetting("dsu_host", "");
+  REQUIRE_MSG(Get().dsuHost == "192.168.1.20", "dsu_host rejects");
+  REQUIRE_MSG(ApplySetting("dsu_port", "26761") && Get().dsuPort == 26761, "dsu_port");
+  ApplySetting("dsu_port", "70000");
+  ApplySetting("dsu_port", "x");
+  REQUIRE_MSG(Get().dsuPort == 26761, "dsu_port range");
+  REQUIRE_MSG(ApplySetting("dsu_slot", "4") && Get().dsuSlot == 4, "dsu_slot");
+  ApplySetting("dsu_slot", "0");
+  REQUIRE_MSG(Get().dsuSlot == 4, "dsu_slot range");
+  REQUIRE_MSG(Text().find("dsu_host=192.168.1.20\ndsu_port=26761\ndsu_slot=4\n") != std::string::npos, "dsu written");
+  ApplySetting("gyro_source", "0");
   REQUIRE_MSG(ApplySetting("gyro_split", "1") && Get().gyroSplit, "gyro_split");
   REQUIRE_MSG(ApplySetting("gyro_sensitivity_y", "0.5") && Get().gyroSensitivityY == 0.5f, "gyro_sensitivity_y");
   ApplySetting("gyro_sensitivity_y", "50");
