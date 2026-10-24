@@ -1359,7 +1359,7 @@ void DrawActiveController() {
       if (selected) ImGui::SetItemDefaultFocus();
       if (pad != nullptr) {
         ImGui::SetItemTooltip("SDL device %u%s", SDL_GetGamepadID(pad),
-                             SDL_IsJoystickVirtual(SDL_GetGamepadID(pad)) ? " (virtual/touch)" : "");
+                             PADIsTouchOverlayJoystick(SDL_GetGamepadID(pad)) ? " (virtual/touch)" : "");
       }
       ImGui::PopID();
     }

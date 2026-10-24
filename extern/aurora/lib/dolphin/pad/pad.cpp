@@ -549,7 +549,7 @@ void __PADSetDefaultMapping(aurora::input::GameController* controller) /*  NOLIN
 // The on-screen touch pad is a virtual gamepad that always uses the default (GameCube-labelled) mapping:
 // never loaded from disk, never saved, and ignoring the setters below.
 static bool is_virtual_controller(const aurora::input::GameController* controller) {
-  return SDL_IsJoystickVirtual(controller->m_index);
+  return PADIsTouchOverlayJoystick(controller->m_index);
 }
 
 void __PADLoadMapping(aurora::input::GameController* controller) /*  NOLINT(*-reserved-identifier) */ {
@@ -1815,6 +1815,14 @@ void PADBlockInput(const bool block) {
     g_suppressHeldOnRead = true;
   }
   g_blockPAD = block;
+}
+
+BOOL PADIsTouchOverlayJoystick(const u32 joystickId) {
+  if (!SDL_IsJoystickVirtual(joystickId)) {
+    return false;
+  }
+  const char* name = SDL_GetJoystickNameForID(joystickId);
+  return name == nullptr || std::strncmp(name, "DSU ", 4) != 0;
 }
 
 SDL_Gamepad* PADGetSDLGamepadForIndex(const u32 index) {

@@ -137,13 +137,7 @@
   the view. With pointer aim and gyro on, the twin-stick look
   stick and keyboard look keys turn the camera as without pointer aim while the
   gyro moves the pointer.
-  `gyro_source` is 0 auto, 1 controller, 2 phone, 3 DSU server: motion over
-  the cemuhook/DSU UDP protocol (as Dolphin's DSU client reads it) from a phone
-  app, BetterJoy, DS4Windows, SteamDeckGyroDSU and the like, so a pad without a
-  gyro (a GameCube controller) can aim by motion while it keeps the buttons and
-  sticks. `dsu_host` (default 127.0.0.1), `dsu_port` (default 26760) and
-  `dsu_slot` (1-4, default 1) pick the server and its controller; F1 shows the
-  connection. The client only runs while source 3 and gyro aim or flicks are on. `gyro_sensitivity` (0.1-10,
+  `gyro_source` is 0 auto, 1 controller, 2 phone. `gyro_sensitivity` (0.1-10,
   default 2) is camera angle per pad angle: 1 turns the camera as far as the pad
   turned. It ignores the mouse sensitivity and invert. An older `gyro_rate` (aim
   pixels per rad/s, which also scaled with the mouse sensitivity) is read once as
@@ -355,6 +349,20 @@
   one assigned to player 2 or later; the choice is saved and restored on reconnect.
   Select it here before recording its bindings in Remap. Remap's "Controller bindings for" selects
   binding profiles, not the controller used to play. Every binding is on **Controls > Remap**, below.
+- DSU controllers (Controls > Controller settings > DSU controllers): pads that
+  another program serves over UDP with the DSU/cemuhook protocol (as Dolphin's DSU
+  client reads it), such as NSO GC Driver, DS4Windows, BetterJoy and phone or Steam
+  Deck apps. `dsu_enabled` (default 1) runs the client, `dsu_server` (default
+  `127.0.0.1:26760`; `host[:port]`, IPv6 in brackets) names the server, and
+  `dsu_layout` (`gamecube`, the default, or `playstation`) says what its pads are.
+  Each connected slot becomes an SDL virtual gamepad named "DSU slot <n>", so it
+  takes a port, is chosen under Remap > Active controller and is remapped like any
+  other pad. `gamecube` presents it as Nintendo's GameCube adapter (the GameCube
+  mapping) and reads NSO GC Driver's buttons: A/B/X/Y as cross/circle/square/
+  triangle, Z as R3, L/R as the analog L2/R2 with the clicks on L1/R1.
+  `playstation` presents a DualShock 4 with the buttons by position. Motion and
+  touch are not read. The client is `platform/port_dsu.cpp`; F1 shows the server's
+  state and each slot's packet rate.
 - **Controls > Remap** lists all devices' bindings together, with keyboard, mouse, controller
   and touch icons. "Controller bindings for" selects all controllers or a controller kind/model
   profile, including saved profiles. Actions are grouped (game buttons,

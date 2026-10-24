@@ -54,6 +54,8 @@
 {"Controls", "Mouse settings", "Mouse aim", "Weapon buttons", "mouse click fire buttons"},
 {"Controls", "Mouse settings", "Mouse aim", "Crosshair", "reticle aim mouse"},
 {"Controls", "Mouse settings", "Mouse aim", "Size", "crosshair reticle size percent"},
+{"Controls", "Controller settings", "DSU controllers", "Use DSU controllers", "dsu cemuhook udp network controller server nso gamecube gc driver ds4windows betterjoy phone steam deck dolphin"},
+{"Controls", "Controller settings", "DSU controllers", "Controller layout", "dsu gamecube playstation ds4 layout buttons"},
 {"Controls", "Controller settings", "Stick aim", "Twin stick (right stick aims)", "twin stick right stick camera aim"},
 {"Controls", "Controller settings", "Stick aim", "Remastered movement (twin stick and mouse aim)", "remastered movement diagonal twin stick"},
 {"Controls", "Controller settings", "Stick aim", "Stick aim speed", "right stick camera turn speed sensitivity"},
@@ -88,8 +90,7 @@
 {"Controls", "Touch & gyro", "Touch controls", "Edit layout", "drag move touch layout position"},
 #endif
 {"Controls", "Touch & gyro", "Gyro aim", "Mode", "gyro tilt aim hold mode ratchet pause toggle"},
-{"Controls", "Touch & gyro", "Gyro aim", "Source", "gyro device pad phone motion sensor dsu cemuhook udp server gamecube betterjoy ds4windows"},
-{"Controls", "Touch & gyro", "Gyro aim", "Slot", "dsu cemuhook server port address ip controller slot"},
+{"Controls", "Touch & gyro", "Gyro aim", "Source", "gyro device pad phone motion sensor"},
 {"Controls", "Touch & gyro", "Gyro aim", "Sensitivity", "gyro speed sensitivity aim natural real world scale"},
 {"Controls", "Touch & gyro", "Gyro aim", "Separate vertical speed", "horizontal vertical split gyro sensitivity"},
 {"Controls", "Touch & gyro", "Gyro aim", "Vertical sensitivity", "gyro vertical up down pitch sensitivity"},

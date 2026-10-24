@@ -5,7 +5,6 @@
 
 #include "port_env.h"
 #include "port_debug.h"
-#include "port_dsu.h"
 #include "port_gyro_motion.h"
 #include "port_photo.h"
 #include "port_pointer.h"
@@ -131,7 +130,7 @@ void SetGyroMode(int mode) {
 
 void SetGyroSource(int source) {
   EnsureInitialized();
-  if (source < 0 || source > 3) {
+  if (source < 0 || source > 2) {
     return;
   }
   sInput.gyroSource = source;
@@ -276,19 +275,6 @@ bool ReadGyroRates(float& pitch, float& yaw, float dt) {
   bool haveAccel = false;
   const void* source = nullptr;
 
-  // A DSU server only when picked: its client keeps a socket and a thread.
-  if (sInput.gyroSource == 3) {
-    PortDsu::Use(sInput.dsuHost, sInput.dsuPort, sInput.dsuSlot - 1);
-    static const char sDsuSource = 0;
-    if (PortDsu::Read(gyro, accel)) {
-      source = &sDsuSource;
-      haveAccel = true;
-      sGyroStatus = "DSU server";
-    }
-  } else {
-    PortDsu::Stop();
-  }
-
   if (wantController) {
     // The player's pad, not the first one SDL lists: that can be another pad
     // or a virtual one (Steam Input's, the Android touch pad) with no gyro.
@@ -410,14 +396,13 @@ void PollGyro() {
   const bool aim = sInput.gyroMode != 0 && (sInput.mouseAim || sInput.twinStick || TouchDirectAim());
   if (!aim && !sInput.springFlick) {
     sGyroStatus = sInput.gyroMode == 0 ? "off" : "needs mouse aim, twin stick or touch controls";
-    PortDsu::Stop();
     return;
   }
 
   float yaw = 0.f;
   float pitch = 0.f;
   if (!ReadGyroRates(pitch, yaw, dt)) {
-    sGyroStatus = sInput.gyroSource == 3 ? "no DSU data (see the server line)" : "no gyro found";
+    sGyroStatus = "no gyro found";
     sSpringFlickArmed = true;
     return;
   }

@@ -303,23 +303,33 @@ void prefer_real_controller_on_first_port() noexcept {
     return;
   }
 
+  // A DSU pad (port_dsu.cpp) is there because the player runs a DSU server and turned the client
+  // on, so it wins port 0 from another real pad too.
+  const auto isDsu = [](SDL_JoystickID instance) {
+    return SDL_IsJoystickVirtual(instance) && !PADIsTouchOverlayJoystick(instance);
+  };
   GameController* first = nullptr;
   GameController* real = nullptr;
+  GameController* dsu = nullptr;
   GameController* virt = nullptr;
   for (auto& [instance, controller] : g_GameControllers) {
     if (SDL_GetGamepadPlayerIndex(controller.m_controller) == 0) {
       first = &controller;
-    } else if (!SDL_IsJoystickVirtual(instance)) {
+    } else if (isDsu(instance)) {
+      dsu = dsu != nullptr ? dsu : &controller;
+    } else if (!PADIsTouchOverlayJoystick(instance)) {
       real = real != nullptr ? real : &controller;
     } else {
       virt = virt != nullptr ? virt : &controller;
     }
   }
 
-  // A real pad on port 0 stays, and a virtual pad only takes port 0 when it is empty
-  const bool firstIsReal = first != nullptr && !SDL_IsJoystickVirtual(first->m_index);
-  GameController* wanted = real != nullptr ? real : virt;
-  if (wanted == nullptr || firstIsReal || (first != nullptr && wanted == virt)) {
+  // A real pad on port 0 stays (unless a DSU pad wants it), and a virtual pad only takes port 0
+  // when it is empty
+  const bool firstIsReal = first != nullptr && !PADIsTouchOverlayJoystick(first->m_index);
+  const bool firstIsDsu = first != nullptr && isDsu(first->m_index);
+  GameController* wanted = dsu != nullptr ? dsu : real != nullptr ? real : virt;
+  if (wanted == nullptr || firstIsDsu || (firstIsReal && wanted != dsu) || (first != nullptr && wanted == virt)) {
     return;
   }
   const int32_t freed = SDL_GetGamepadPlayerIndex(wanted->m_controller);

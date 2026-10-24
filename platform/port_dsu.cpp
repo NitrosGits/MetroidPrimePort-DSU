@@ -1,5 +1,16 @@
+// DSU controller client (port_dsu.h). The network thread asks the server for the
+// slots' info and pad data every second (a server stops sending after about five
+// seconds without a request) and keeps the newest packet per slot. Update(), on
+// the game thread, turns each live slot into an SDL virtual gamepad.
+
 #include "port_dsu.h"
 
+#include "port_input_settings.h"
+#include "port_log.h"
+
+#include <SDL3/SDL.h>
+
+#include <algorithm>
 #include <array>
 #include <atomic>
 #include <chrono>
@@ -7,6 +18,7 @@
 #include <mutex>
 #include <random>
 #include <thread>
+#include <utility>
 
 #if defined(_WIN32)
 #ifndef NOMINMAX
@@ -24,102 +36,6 @@
 #endif
 
 namespace PortDsu {
-namespace Proto {
-namespace {
-
-constexpr float kRadPerDeg = 0.017453292519943295f;
-constexpr float kStandardGravity = 9.80665f;
-constexpr uint8_t kRegisterPadId = 1;
-
-void PutU16(uint8_t* p, uint16_t v) {
-  p[0] = uint8_t(v);
-  p[1] = uint8_t(v >> 8);
-}
-
-void PutU32(uint8_t* p, uint32_t v) {
-  for (int i = 0; i < 4; ++i) {
-    p[i] = uint8_t(v >> (8 * i));
-  }
-}
-
-uint32_t GetU32(const uint8_t* p) { return uint32_t(p[0]) | uint32_t(p[1]) << 8 | uint32_t(p[2]) << 16 | uint32_t(p[3]) << 24; }
-
-uint64_t GetU64(const uint8_t* p) { return uint64_t(GetU32(p)) | uint64_t(GetU32(p + 4)) << 32; }
-
-float GetF32(const uint8_t* p) {
-  const uint32_t bits = GetU32(p);
-  float f;
-  std::memcpy(&f, &bits, sizeof(f));
-  return f;
-}
-
-} // namespace
-
-uint32_t Crc32(const uint8_t* data, std::size_t size) {
-  static const std::array< uint32_t, 256 > table = [] {
-    std::array< uint32_t, 256 > t{};
-    for (uint32_t i = 0; i < 256; ++i) {
-      uint32_t c = i;
-      for (int k = 0; k < 8; ++k) {
-        c = (c & 1) != 0 ? 0xEDB88320u ^ (c >> 1) : c >> 1;
-      }
-      t[i] = c;
-    }
-    return t;
-  }();
-  uint32_t crc = 0xFFFFFFFFu;
-  for (std::size_t i = 0; i < size; ++i) {
-    crc = table[(crc ^ data[i]) & 0xFF] ^ (crc >> 8);
-  }
-  return crc ^ 0xFFFFFFFFu;
-}
-
-void BuildPadDataRequest(uint8_t (&out)[kPadDataRequestSize], uint32_t clientId, int slot) {
-  std::memset(out, 0, sizeof(out));
-  std::memcpy(out, "DSUC", 4);
-  PutU16(out + 4, kVersion);
-  // The length counts the message type and what follows, not the header.
-  PutU16(out + 6, uint16_t(kPadDataRequestSize - kHeaderSize));
-  PutU32(out + 12, clientId);
-  PutU32(out + 16, kTypePadData);
-  out[20] = kRegisterPadId;
-  out[21] = uint8_t(slot);
-  PutU32(out + 8, Crc32(out, sizeof(out)));
-}
-
-bool ParsePadData(const uint8_t* data, std::size_t size, Motion& out) {
-  if (size < kPadDataResponseSize || std::memcmp(data, "DSUS", 4) != 0 || GetU32(data + 16) != kTypePadData) {
-    return false;
-  }
-  // The CRC covers the whole message (a newer server's extra fields too) with
-  // its own field zeroed.
-  const std::size_t length = kHeaderSize + (uint16_t(data[6]) | uint16_t(data[7]) << 8);
-  uint8_t packet[1024];
-  if (length > size || length < kPadDataResponseSize || length > sizeof(packet)) {
-    return false;
-  }
-  std::memcpy(packet, data, length);
-  std::memset(packet + 8, 0, 4);
-  if (Crc32(packet, length) != GetU32(data + 8)) {
-    return false;
-  }
-  out.slot = data[20];
-  out.connected = data[21] == 2; // pad_state: 0 disconnected, 1 reserved, 2 connected
-  out.timestampUs = GetU64(data + 68);
-  // DSU's accel is in g with x left, y down and z away from the player (as
-  // Dolphin reads it), its gyro pitch up, yaw right and roll right in deg/s;
-  // SDL counts x right, y up, z toward the player, counter-clockwise positive.
-  out.accel[0] = -GetF32(data + 76) * kStandardGravity;
-  out.accel[1] = -GetF32(data + 80) * kStandardGravity;
-  out.accel[2] = -GetF32(data + 84) * kStandardGravity;
-  out.gyro[0] = GetF32(data + 88) * kRadPerDeg;
-  out.gyro[1] = -GetF32(data + 92) * kRadPerDeg;
-  out.gyro[2] = -GetF32(data + 96) * kRadPerDeg;
-  return true;
-}
-
-} // namespace Proto
-
 namespace {
 
 #if defined(_WIN32)
@@ -143,32 +59,41 @@ bool InitSockets() { return true; }
 #endif
 
 using Clock = std::chrono::steady_clock;
-// Servers drop a client that has not asked for about five seconds.
-constexpr auto kReregister = std::chrono::seconds(1);
-constexpr auto kStale = std::chrono::seconds(1);
-constexpr int kPollMs = 250;
+constexpr auto kRequestEvery = std::chrono::seconds(1);
+// Nothing about a slot for this long: the pad is unplugged (its virtual pad goes
+// away). Some servers send pad data only on a change, so slot info counts too.
+constexpr auto kSlotTimeout = std::chrono::seconds(3);
+constexpr auto kServerTimeout = std::chrono::seconds(3);
+constexpr int kPollMs = 100;
+
+struct Slot {
+  bool valid = false;
+  Clock::time_point when;
+  Proto::Pad pad;
+  unsigned packets = 0;       // this second
+  unsigned packetsShown = 0;  // the last whole second
+  Clock::time_point secondStart;
+};
 
 class Client {
 public:
   ~Client() { Stop(); }
 
-  void Use(const std::string& host, int port, int slot) {
-    if (mRunning && host == mHost && port == mPort && slot == mSlot) {
+  void Use(const std::string& server) {
+    if (mRunning && server == mServer) {
       return;
     }
     Stop();
-    mHost = host;
-    mPort = port;
-    mSlot = slot;
+    mServer = server;
     {
       std::lock_guard< std::mutex > lock(mMutex);
-      mHaveSample = false;
-      mGyroCount = 0;
-      mStatus = "connecting to " + Address();
+      mSlots = {};
+      mLastValid = {};
+      mError.clear();
     }
     mStop = false;
     mRunning = true;
-    mThread = std::thread([this, host, port, slot] { Run(host, port, slot); });
+    mThread = std::thread([this, server] { Run(server); });
   }
 
   void Stop() {
@@ -181,48 +106,67 @@ public:
     }
     mRunning = false;
     std::lock_guard< std::mutex > lock(mMutex);
-    mHaveSample = false;
-    mStatus = "off";
+    mSlots = {};
   }
 
-  bool Read(float gyro[3], float accel[3]) {
+  bool Running() const { return mRunning; }
+
+  // The live slots' pads (connected, heard from lately).
+  std::array< std::pair< bool, Proto::Pad >, kSlotCount > Live() {
+    std::array< std::pair< bool, Proto::Pad >, kSlotCount > out{};
     std::lock_guard< std::mutex > lock(mMutex);
-    if (!mHaveSample || Clock::now() - mLastSample > kStale) {
-      return false;
+    const Clock::time_point now = Clock::now();
+    for (int i = 0; i < kSlotCount; ++i) {
+      out[i] = {mSlots[i].valid && now - mSlots[i].when < kSlotTimeout, mSlots[i].pad};
     }
-    // A frame between two packets repeats the last rate rather than reading still.
-    if (mGyroCount > 0) {
-      for (int i = 0; i < 3; ++i) {
-        mGyro[i] = mGyroSum[i] / float(mGyroCount);
-        mGyroSum[i] = 0.f;
+    return out;
+  }
+
+  std::string ServerStatus() {
+    if (!mRunning) {
+      return "off";
+    }
+    std::lock_guard< std::mutex > lock(mMutex);
+    if (!mError.empty()) {
+      return mServer + ": " + mError;
+    }
+    if (mLastValid == Clock::time_point{} || Clock::now() - mLastValid > kServerTimeout) {
+      return mServer + ": waiting for the server...";
+    }
+    return mServer + ": connected";
+  }
+
+  std::vector< std::string > SlotStatus() {
+    std::vector< std::string > out;
+    std::lock_guard< std::mutex > lock(mMutex);
+    const Clock::time_point now = Clock::now();
+    for (int i = 0; i < kSlotCount; ++i) {
+      const Slot& s = mSlots[i];
+      if (!s.valid || now - s.when >= kSlotTimeout) {
+        continue;
       }
-      mGyroCount = 0;
+      const char* connection = s.pad.connection == 1 ? "USB" : s.pad.connection == 2 ? "Bluetooth" : "network";
+      out.push_back("DSU slot " + std::to_string(i + 1) + ": " + connection + ", " + std::to_string(s.packetsShown) +
+                    " packets/s");
     }
-    std::memcpy(gyro, mGyro, sizeof(mGyro));
-    std::memcpy(accel, mAccel, sizeof(mAccel));
-    return true;
-  }
-
-  std::string Status() {
-    std::lock_guard< std::mutex > lock(mMutex);
-    if (mRunning && mHaveSample && Clock::now() - mLastSample > kStale) {
-      return "no data from " + Address() + " slot " + std::to_string(mSlot + 1);
-    }
-    return mStatus;
+    return out;
   }
 
 private:
-  std::string Address() const { return mHost + ":" + std::to_string(mPort); }
-
-  void SetStatus(std::string status) {
+  void SetError(std::string error) {
     std::lock_guard< std::mutex > lock(mMutex);
-    mStatus = std::move(status);
+    mError = std::move(error);
   }
 
-  void Run(std::string host, int port, int slot) {
-    const std::string address = host + ":" + std::to_string(port);
+  void Run(std::string server) {
+    std::string host;
+    std::string port;
+    if (!SplitServer(server, host, port)) {
+      SetError("not a host:port");
+      return;
+    }
     if (!InitSockets()) {
-      SetStatus("sockets unavailable");
+      SetError("sockets unavailable");
       return;
     }
     addrinfo hints{};
@@ -230,38 +174,42 @@ private:
     hints.ai_socktype = SOCK_DGRAM;
     hints.ai_protocol = IPPROTO_UDP;
     addrinfo* found = nullptr;
-    // Retried while the thread runs: a DNS name may only resolve once the network is up.
-    while (!mStop && getaddrinfo(host.c_str(), std::to_string(port).c_str(), &hints, &found) != 0) {
-      SetStatus("can't resolve " + host);
-      for (int i = 0; i < 8 && !mStop; ++i) {
+    // Retried: a DNS name may only resolve once the network is up.
+    while (!mStop && getaddrinfo(host.c_str(), port.c_str(), &hints, &found) != 0) {
+      SetError("can't resolve " + host);
+      for (int i = 0; i < 20 && !mStop; ++i) {
         std::this_thread::sleep_for(std::chrono::milliseconds(kPollMs));
       }
     }
     if (mStop) {
       return;
     }
-    sockaddr_storage server{};
-    const socklen_t serverLen = socklen_t(found->ai_addrlen);
-    std::memcpy(&server, found->ai_addr, found->ai_addrlen);
+    sockaddr_storage addr{};
+    const socklen_t addrLen = socklen_t(found->ai_addrlen);
+    std::memcpy(&addr, found->ai_addr, found->ai_addrlen);
     const Socket s = socket(found->ai_family, SOCK_DGRAM, IPPROTO_UDP);
     freeaddrinfo(found);
     if (s == kNoSocket) {
-      SetStatus("can't open a UDP socket");
+      SetError("can't open a UDP socket");
       return;
     }
-    const uint32_t clientId = std::random_device{}();
-    uint8_t request[Proto::kPadDataRequestSize];
-    Proto::BuildPadDataRequest(request, clientId, slot);
-    SetStatus("waiting for " + address + " slot " + std::to_string(slot + 1));
+    SetError("");
+    PortLog::Write("[dsu] client for %s\n", server.c_str());
 
+    const uint32_t clientId = std::random_device{}();
+    // The four slots' info, and pad data for every slot (registration flags 0).
+    const std::vector< uint8_t > ports = Proto::BuildRequest(clientId, Proto::kTypePorts, {kSlotCount, 0, 0, 0, 0, 1, 2, 3});
+    const std::vector< uint8_t > data = Proto::BuildRequest(clientId, Proto::kTypePadData, {0, 0, 0, 0, 0, 0, 0, 0});
     Clock::time_point nextRequest{};
-    uint8_t buffer[1024];
+    uint8_t buffer[2048];
     while (!mStop) {
       const Clock::time_point now = Clock::now();
       if (now >= nextRequest) {
-        sendto(s, reinterpret_cast< const char* >(request), int(sizeof(request)), 0,
-               reinterpret_cast< const sockaddr* >(&server), serverLen);
-        nextRequest = now + kReregister;
+        for (const auto* p : {&ports, &data}) {
+          sendto(s, reinterpret_cast< const char* >(p->data()), int(p->size()), 0,
+                 reinterpret_cast< const sockaddr* >(&addr), addrLen);
+        }
+        nextRequest = now + kRequestEvery;
       }
       pollfd fd{};
       fd.fd = s;
@@ -269,22 +217,47 @@ private:
       if (PollSocket(&fd, kPollMs) <= 0 || (fd.revents & POLLIN) == 0) {
         continue;
       }
-      // Errors (an ICMP unreachable while no server listens) only wait for the next request.
+      // Errors (an ICMP unreachable while no server listens) wait for the next request.
       const int got = int(recv(s, reinterpret_cast< char* >(buffer), int(sizeof(buffer)), 0));
-      Proto::Motion motion;
-      if (got <= 0 || !Proto::ParsePadData(buffer, std::size_t(got), motion) || motion.slot != slot ||
-          !motion.connected) {
+      if (got <= 0) {
+        continue;
+      }
+      int infoSlot = 0;
+      bool infoConnected = false;
+      if (Proto::ParsePortInfo(buffer, std::size_t(got), infoSlot, infoConnected)) {
+        if (infoSlot >= 0 && infoSlot < kSlotCount) {
+          std::lock_guard< std::mutex > lock(mMutex);
+          mLastValid = Clock::now();
+          Slot& slot = mSlots[infoSlot];
+          // Only keeps a pad already seen alive: its buttons come with pad data.
+          if (!infoConnected) {
+            slot.valid = false;
+          } else if (slot.valid) {
+            slot.when = mLastValid;
+          }
+        }
+        continue;
+      }
+      Proto::Pad pad;
+      if (!Proto::ParsePadData(buffer, std::size_t(got), pad) || pad.slot < 0 || pad.slot >= kSlotCount) {
         continue;
       }
       std::lock_guard< std::mutex > lock(mMutex);
-      for (int i = 0; i < 3; ++i) {
-        mGyroSum[i] += motion.gyro[i];
+      const Clock::time_point when = Clock::now();
+      mLastValid = when;
+      Slot& slot = mSlots[pad.slot];
+      slot.valid = pad.connected;
+      if (!pad.connected) {
+        continue;
       }
-      ++mGyroCount;
-      std::memcpy(mAccel, motion.accel, sizeof(mAccel));
-      mLastSample = Clock::now();
-      mHaveSample = true;
-      mStatus = "receiving from " + address + " slot " + std::to_string(slot + 1);
+      slot.pad = pad;
+      slot.when = when;
+      if (when - slot.secondStart >= std::chrono::seconds(1)) {
+        slot.packetsShown = slot.packets;
+        slot.packets = 0;
+        slot.secondStart = when;
+      }
+      ++slot.packets;
     }
     CloseSocket(s);
   }
@@ -293,18 +266,12 @@ private:
   std::thread mThread;
   std::atomic< bool > mStop{false};
   bool mRunning = false;
-  std::string mHost;
-  int mPort = 0;
-  int mSlot = 0;
+  std::string mServer;
   // Shared with the thread.
   std::mutex mMutex;
-  std::string mStatus = "off";
-  bool mHaveSample = false;
-  Clock::time_point mLastSample;
-  float mGyroSum[3] = {};
-  int mGyroCount = 0;
-  float mGyro[3] = {};
-  float mAccel[3] = {};
+  std::array< Slot, kSlotCount > mSlots{};
+  Clock::time_point mLastValid{};
+  std::string mError;
 };
 
 Client& TheClient() {
@@ -312,11 +279,152 @@ Client& TheClient() {
   return client;
 }
 
+// ---- Virtual gamepads ----
+
+struct Virtual {
+  SDL_JoystickID id = 0;
+  SDL_Joystick* joy = nullptr;
+  int layout = kLayoutGameCube;
+};
+std::array< Virtual, kSlotCount > sVirtual{};
+
+Virtual Attach(int slot, int layout) {
+  const std::string name = "DSU slot " + std::to_string(slot + 1);
+  SDL_VirtualJoystickDesc desc;
+  SDL_INIT_INTERFACE(&desc);
+  desc.type = SDL_JOYSTICK_TYPE_GAMEPAD;
+  // The ids decide SDL's gamepad type and with it Aurora's default mapping:
+  // Nintendo's GameCube adapter (GameCube mapping, L/R clicks on MISC3/MISC4, no
+  // trigger emulation), or a DualShock 4. The name marks it as a real controller
+  // rather than the touch overlay (PADIsTouchOverlayJoystick).
+  const bool gc = layout == kLayoutGameCube;
+  desc.vendor_id = gc ? 0x057E : 0x054C;
+  desc.product_id = gc ? 0x0337 : 0x09CC;
+  desc.naxes = SDL_GAMEPAD_AXIS_COUNT;
+  desc.nbuttons = SDL_GAMEPAD_BUTTON_COUNT;
+  desc.button_mask = (1u << SDL_GAMEPAD_BUTTON_COUNT) - 1;
+  desc.axis_mask = (1u << SDL_GAMEPAD_AXIS_COUNT) - 1;
+  desc.name = name.c_str();
+  Virtual v;
+  v.layout = layout;
+  v.id = SDL_AttachVirtualJoystick(&desc);
+  v.joy = v.id != 0 ? SDL_OpenJoystick(v.id) : nullptr;
+  if (v.joy != nullptr) {
+    for (const int t : {SDL_GAMEPAD_AXIS_LEFT_TRIGGER, SDL_GAMEPAD_AXIS_RIGHT_TRIGGER}) {
+      SDL_SetJoystickVirtualAxis(v.joy, t, SDL_JOYSTICK_AXIS_MIN); // released
+    }
+    PortLog::Write("[dsu] %s connected (%s layout)\n", name.c_str(), gc ? "GameCube" : "PlayStation");
+  } else {
+    PortLog::Write("[dsu] %s: no virtual gamepad: %s\n", name.c_str(), SDL_GetError());
+    if (v.id != 0) {
+      SDL_DetachVirtualJoystick(v.id);
+      v.id = 0;
+    }
+  }
+  return v;
+}
+
+void Detach(int slot) {
+  Virtual& v = sVirtual[slot];
+  if (v.joy != nullptr) {
+    SDL_CloseJoystick(v.joy);
+  }
+  if (v.id != 0) {
+    SDL_DetachVirtualJoystick(v.id);
+    PortLog::Write("[dsu] DSU slot %d disconnected\n", slot + 1);
+  }
+  v = Virtual{};
+}
+
+// DSU stick byte (128 centre, larger = right / up) to an SDL axis (negative = left / up).
+Sint16 StickAxis(uint8_t v, bool flipY) {
+  const int c = (int(v) - 128) * 256;
+  return Sint16(std::clamp(flipY ? -c : c, -32768, 32767));
+}
+
+// DSU trigger byte (0-255) to a trigger axis (-32768 released .. 32767 pulled).
+Sint16 TriggerAxis(uint8_t v) { return Sint16(-32768 + int(v) * 257); }
+
+void Apply(SDL_Joystick* j, const Proto::Pad& d, int layout) {
+  const uint8_t b1 = d.buttons1;
+  const uint8_t b2 = d.buttons2;
+  // From bit 0 up, buttons1: share, L3, R3, options, up, right, down, left;
+  // buttons2: L2, R2, L1, R1, square, cross, circle, triangle.
+  if (layout == kLayoutGameCube) {
+    // SDL's GameCube buttons: A south, B west, X east, Y north, Z right shoulder,
+    // the L/R clicks MISC3/MISC4. The server sends B as circle, X as square, Z as
+    // R3 and the clicks as L1/R1 (or only L2/R2's bits).
+    const std::pair< int, bool > buttons[] = {
+        {SDL_GAMEPAD_BUTTON_SOUTH, (b2 & 0x20) != 0},          {SDL_GAMEPAD_BUTTON_WEST, (b2 & 0x40) != 0},
+        {SDL_GAMEPAD_BUTTON_EAST, (b2 & 0x10) != 0},           {SDL_GAMEPAD_BUTTON_NORTH, (b2 & 0x80) != 0},
+        {SDL_GAMEPAD_BUTTON_RIGHT_SHOULDER, (b1 & 0x04) != 0}, {SDL_GAMEPAD_BUTTON_MISC3, (b2 & 0x05) != 0},
+        {SDL_GAMEPAD_BUTTON_MISC4, (b2 & 0x0A) != 0},          {SDL_GAMEPAD_BUTTON_START, (b1 & 0x08) != 0},
+        {SDL_GAMEPAD_BUTTON_BACK, (b1 & 0x01) != 0},           {SDL_GAMEPAD_BUTTON_LEFT_STICK, (b1 & 0x02) != 0},
+        {SDL_GAMEPAD_BUTTON_DPAD_UP, (b1 & 0x10) != 0},        {SDL_GAMEPAD_BUTTON_DPAD_RIGHT, (b1 & 0x20) != 0},
+        {SDL_GAMEPAD_BUTTON_DPAD_DOWN, (b1 & 0x40) != 0},      {SDL_GAMEPAD_BUTTON_DPAD_LEFT, (b1 & 0x80) != 0},
+        {SDL_GAMEPAD_BUTTON_GUIDE, d.home != 0},
+    };
+    for (const auto& [b, down] : buttons) {
+      SDL_SetJoystickVirtualButton(j, b, down);
+    }
+  } else {
+    const std::pair< int, bool > buttons[] = {
+        {SDL_GAMEPAD_BUTTON_BACK, (b1 & 0x01) != 0},          {SDL_GAMEPAD_BUTTON_LEFT_STICK, (b1 & 0x02) != 0},
+        {SDL_GAMEPAD_BUTTON_RIGHT_STICK, (b1 & 0x04) != 0},   {SDL_GAMEPAD_BUTTON_START, (b1 & 0x08) != 0},
+        {SDL_GAMEPAD_BUTTON_DPAD_UP, (b1 & 0x10) != 0},       {SDL_GAMEPAD_BUTTON_DPAD_RIGHT, (b1 & 0x20) != 0},
+        {SDL_GAMEPAD_BUTTON_DPAD_DOWN, (b1 & 0x40) != 0},     {SDL_GAMEPAD_BUTTON_DPAD_LEFT, (b1 & 0x80) != 0},
+        {SDL_GAMEPAD_BUTTON_LEFT_SHOULDER, (b2 & 0x04) != 0}, {SDL_GAMEPAD_BUTTON_RIGHT_SHOULDER, (b2 & 0x08) != 0},
+        {SDL_GAMEPAD_BUTTON_WEST, (b2 & 0x10) != 0},          {SDL_GAMEPAD_BUTTON_SOUTH, (b2 & 0x20) != 0},
+        {SDL_GAMEPAD_BUTTON_EAST, (b2 & 0x40) != 0},          {SDL_GAMEPAD_BUTTON_NORTH, (b2 & 0x80) != 0},
+        {SDL_GAMEPAD_BUTTON_GUIDE, d.home != 0},              {SDL_GAMEPAD_BUTTON_TOUCHPAD, d.touch != 0},
+    };
+    for (const auto& [b, down] : buttons) {
+      SDL_SetJoystickVirtualButton(j, b, down);
+    }
+  }
+  SDL_SetJoystickVirtualAxis(j, SDL_GAMEPAD_AXIS_LEFTX, StickAxis(d.lx, false));
+  SDL_SetJoystickVirtualAxis(j, SDL_GAMEPAD_AXIS_LEFTY, StickAxis(d.ly, true));
+  SDL_SetJoystickVirtualAxis(j, SDL_GAMEPAD_AXIS_RIGHTX, StickAxis(d.rx, false));
+  SDL_SetJoystickVirtualAxis(j, SDL_GAMEPAD_AXIS_RIGHTY, StickAxis(d.ry, true));
+  // A server that only sets the L2/R2 bits still gives a full pull.
+  SDL_SetJoystickVirtualAxis(j, SDL_GAMEPAD_AXIS_LEFT_TRIGGER, TriggerAxis((b2 & 0x01) != 0 ? 255 : d.l2));
+  SDL_SetJoystickVirtualAxis(j, SDL_GAMEPAD_AXIS_RIGHT_TRIGGER, TriggerAxis((b2 & 0x02) != 0 ? 255 : d.r2));
+}
+
 } // namespace
 
-void Use(const std::string& host, int port, int slot) { TheClient().Use(host, port, slot); }
-void Stop() { TheClient().Stop(); }
-bool Read(float gyro[3], float accel[3]) { return TheClient().Read(gyro, accel); }
-std::string Status() { return TheClient().Status(); }
+void Update() {
+  const PortInput::Settings& s = PortInput::Get();
+  Client& client = TheClient();
+  if (s.dsuEnabled) {
+    client.Use(s.dsuServer);
+  } else {
+    client.Stop();
+  }
+  const auto live = client.Live();
+  for (int slot = 0; slot < kSlotCount; ++slot) {
+    Virtual& v = sVirtual[slot];
+    if (!live[slot].first) {
+      if (v.id != 0) {
+        Detach(slot);
+      }
+      continue;
+    }
+    // A layout change plugs the pad in again as the other type.
+    if (v.id != 0 && v.layout != s.dsuLayout) {
+      Detach(slot);
+    }
+    if (v.id == 0) {
+      v = Attach(slot, s.dsuLayout);
+    }
+    if (v.joy != nullptr) {
+      Apply(v.joy, live[slot].second, v.layout);
+    }
+  }
+}
+
+std::string ServerStatus() { return TheClient().ServerStatus(); }
+
+std::vector< std::string > SlotStatus() { return TheClient().SlotStatus(); }
 
 } // namespace PortDsu

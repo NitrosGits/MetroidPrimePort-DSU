@@ -615,7 +615,7 @@ void SetStickAimRate(float pixelsPerSecond);
 // aim, 3 aim except while it is held, 4 press to toggle aim (initially off).
 // Source: 0 auto (a pad's gyro if it has
 // one, else the phone's), 1 controller only, 2 the device's own gyro (Android
-// phones), 3 a DSU server (port_dsu.h). Sensitivity is camera angle per pad angle, apart from the mouse's.
+// phones). Sensitivity is camera angle per pad angle, apart from the mouse's.
 void SetGyroMode(int mode);
 void SetGyroSource(int source);
 void SetGyroSensitivity(float scale);

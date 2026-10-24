@@ -217,6 +217,51 @@ void DrawControlsKeyboardMouse() {
 }
 
 void DrawControlsController() {
+  ImGui::SeparatorText("DSU controllers");
+  if (ImGui::Checkbox("Use DSU controllers", &sInput.dsuEnabled)) {
+    MarkDirty();
+  }
+  ItemHelp("Controllers that another program serves over the network (DSU/cemuhook, as in Dolphin): "
+           "NSO GC Driver, DS4Windows, BetterJoy, phone or Steam Deck apps. Each one shows up as a "
+           "controller named \"DSU slot <n>\"; if another pad has player 1, pick it under Remap > Active controller.");
+  ImGui::BeginDisabled(!sInput.dsuEnabled);
+  // Edited in a buffer and taken on Enter or leaving the field, so a half typed
+  // address doesn't restart the client on every key.
+  static char sDsuServer[PortInput::kDsuServerMaxLen + 1] = {};
+  static bool sDsuServerEditing = false;
+  if (!sDsuServerEditing) {
+    std::snprintf(sDsuServer, sizeof(sDsuServer), "%s", sInput.dsuServer.c_str());
+  }
+  ImGui::InputText("Server##dsu", sDsuServer, sizeof(sDsuServer), ImGuiInputTextFlags_CharsNoBlank);
+  sDsuServerEditing = ImGui::IsItemActive();
+  if (ImGui::IsItemDeactivated() && sDsuServer[0] != '\0' && sInput.dsuServer != sDsuServer) {
+    sInput.dsuServer = sDsuServer;
+    MarkDirty();
+  }
+  ItemHelp("host:port of the DSU server: 127.0.0.1:26760 for one on this computer, or the phone's or "
+           "PC's IP address, e.g. 192.168.1.20:26760.");
+  ImGui::SameLine();
+  if (ImGui::Button("Default##dsu")) {
+    sInput.dsuServer = PortDsu::kDefaultServer;
+    MarkDirty();
+  }
+  const char* dsuLayouts[] = {"GameCube controller", "PlayStation (DS4) or other pad"};
+  int dsuLayout = std::clamp(sInput.dsuLayout, 0, 1);
+  if (ImGui::Combo("Controller layout##dsu", &dsuLayout, dsuLayouts, IM_ARRAYSIZE(dsuLayouts))) {
+    sInput.dsuLayout = dsuLayout;
+    MarkDirty();
+  }
+  ItemHelp("What the server's controllers are. GameCube controller: a GameCube pad behind the server "
+           "(NSO GC Driver); it gets the GameCube layout. PlayStation: DS4Windows, BetterJoy, phone "
+           "apps; buttons by position.");
+  if (sInput.dsuEnabled) {
+    ImGui::Text("%s", PortDsu::ServerStatus().c_str());
+    for (const std::string& line : PortDsu::SlotStatus()) {
+      ImGui::BulletText("%s", line.c_str());
+    }
+  }
+  ImGui::EndDisabled();
+
   ImGui::SeparatorText("Stick aim");
   bool twinStick = sInput.twinStick;
   if (ImGui::Checkbox("Twin stick (right stick aims)", &twinStick)) {
@@ -267,7 +312,7 @@ void DrawControlsController() {
   }
   const s32 controllerIndex = PADGetIndexForPort(PAD_CHAN0);
   if (SDL_Gamepad* pad = controllerIndex >= 0 ? PADGetSDLGamepadForIndex(static_cast< u32 >(controllerIndex)) : nullptr;
-      pad != nullptr && SDL_IsJoystickVirtual(SDL_GetGamepadID(pad))) {
+      pad != nullptr && PADIsTouchOverlayJoystick(SDL_GetGamepadID(pad))) {
     // Aurora ignores mappings on the virtual touch pad.
     ImGui::TextWrapped("The touch controls always use the GameCube layout; presets and remaps apply to "
                        "real controllers only.");
@@ -428,44 +473,10 @@ void DrawControlsTouchGyro() {
            "twin stick or the touch "
            "controls (not the classic layout).");
   ImGui::BeginDisabled(sInput.gyroMode == 0 && !sInput.springFlick);
-  const char* gyroSources[] = {"Auto", "Controller", "Phone", "DSU server"};
+  const char* gyroSources[] = {"Auto", "Controller", "Phone"};
   int gyroSource = sInput.gyroSource;
-  if (ImGui::Combo("Source", &gyroSource, gyroSources, IM_ARRAYSIZE(gyroSources))) {
+  if (ImGui::Combo("Source", &gyroSource, gyroSources, 3)) {
     SetGyroSource(gyroSource);
-  }
-  ItemHelp("DSU server: motion from a cemuhook/DSU server (a phone app, BetterJoy, DS4Windows, "
-           "SteamDeckGyroDSU...) for a pad without a gyro, such as a GameCube controller. The pad "
-           "still does the buttons and sticks.");
-  if (sInput.gyroSource == 3) {
-    // Edited in a buffer and taken on Enter or leaving the field, so a half
-    // typed name doesn't restart the client on every key.
-    static char sDsuHost[PortInput::kDsuHostMaxLen + 1] = {};
-    static bool sDsuHostEditing = false;
-    if (!sDsuHostEditing) {
-      std::snprintf(sDsuHost, sizeof(sDsuHost), "%s", sInput.dsuHost.c_str());
-    }
-    ImGui::InputText("Server##dsu", sDsuHost, sizeof(sDsuHost), ImGuiInputTextFlags_CharsNoBlank);
-    sDsuHostEditing = ImGui::IsItemActive();
-    if (ImGui::IsItemDeactivated() && sDsuHost[0] != '\0' && sInput.dsuHost != sDsuHost) {
-      sInput.dsuHost = sDsuHost;
-      MarkDirty();
-    }
-    ItemHelp("The DSU server's address: 127.0.0.1 for one on this computer, or the phone's IP "
-             "address shown by its DSU app.");
-    int dsuPort = sInput.dsuPort;
-    if (ImGui::InputInt("Port##dsu", &dsuPort, 0, 0) && dsuPort >= 1 && dsuPort <= 65535) {
-      sInput.dsuPort = dsuPort;
-      MarkDirty();
-    }
-    ItemHelp("26760 unless the server says otherwise.");
-    int dsuSlot = sInput.dsuSlot - 1;
-    const char* dsuSlots[] = {"1", "2", "3", "4"};
-    if (ImGui::Combo("Slot##dsu", &dsuSlot, dsuSlots, IM_ARRAYSIZE(dsuSlots))) {
-      sInput.dsuSlot = dsuSlot + 1;
-      MarkDirty();
-    }
-    ItemHelp("Which of the server's controllers to read; the first is 1.");
-    ImGui::Text("Server: %s", PortDsu::Status().c_str());
   }
   ImGui::Text("Gyro: %s", GyroStatus());
   ImGui::EndDisabled();

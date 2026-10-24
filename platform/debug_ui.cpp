@@ -359,10 +359,10 @@ namespace {
 bool IsPhysicalInput(const SDL_Event& event) {
   switch (event.type) {
   case SDL_EVENT_GAMEPAD_BUTTON_DOWN:
-    return !SDL_IsJoystickVirtual(event.gbutton.which);
+    return !PADIsTouchOverlayJoystick(event.gbutton.which);
   case SDL_EVENT_GAMEPAD_AXIS_MOTION:
     return std::abs(static_cast< int >(event.gaxis.value)) > 16000 &&
-           !SDL_IsJoystickVirtual(event.gaxis.which);
+           !PADIsTouchOverlayJoystick(event.gaxis.which);
   case SDL_EVENT_KEY_DOWN:
     // The soft keyboard types into the overlay's text fields, and Back and the
     // media keys come from the phone itself.
