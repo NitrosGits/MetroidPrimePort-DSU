@@ -1817,14 +1817,6 @@ void PADBlockInput(const bool block) {
   g_blockPAD = block;
 }
 
-BOOL PADIsTouchOverlayJoystick(const u32 joystickId) {
-  if (!SDL_IsJoystickVirtual(joystickId)) {
-    return false;
-  }
-  const char* name = SDL_GetJoystickNameForID(joystickId);
-  return name == nullptr || std::strncmp(name, "DSU ", 4) != 0;
-}
-
 SDL_Gamepad* PADGetSDLGamepadForIndex(const u32 index) {
   const auto* ctrl = __PADGetControllerForIndex(index);
   if (ctrl == nullptr) {

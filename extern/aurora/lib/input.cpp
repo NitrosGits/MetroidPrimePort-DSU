@@ -7,9 +7,11 @@
 
 #include <SDL3/SDL_haptic.h>
 #include <SDL3/SDL.h>
+#include <dolphin/pad.h>
 #include <absl/container/flat_hash_map.h>
 #include <algorithm>
 #include <array>
+#include <cstring>
 #include <filesystem>
 #include <string>
 #include <utility>
@@ -606,3 +608,12 @@ void shutdown() noexcept {
   device::shutdown();
 }
 } // namespace aurora::input
+
+// In core rather than the pad library: prefer_real_controller_on_first_port above needs it too.
+BOOL PADIsTouchOverlayJoystick(const u32 joystickId) {
+  if (!SDL_IsJoystickVirtual(joystickId)) {
+    return false;
+  }
+  const char* name = SDL_GetJoystickNameForID(joystickId);
+  return name == nullptr || std::strncmp(name, "DSU ", 4) != 0;
+}
