@@ -257,6 +257,7 @@ set(MP_PORT_SOURCES
     platform/port_freecam.cpp
     platform/port_third_person.cpp
     platform/port_third_person_body.cpp
+    platform/port_world_holders.cpp
     platform/port_photo.cpp
     platform/port_console.cpp
     platform/port_log_file.cpp
@@ -319,6 +320,8 @@ set(MP_PORT_SOURCES
     platform/port_room_geo_file.cpp
     platform/port_room_liquid.cpp
     platform/port_room_effects.cpp
+    platform/port_queen_barrier.cpp
+    platform/port_queen_barrier_validate.cpp
     platform/port_room_effects_file.cpp
     platform/port_retail_placement.cpp
     platform/port_retail_placement_file.cpp
@@ -1091,6 +1094,12 @@ if(MP_BUILD_TESTS)
     mp_port_test(port_remastered_import_tests
         SOURCES tests/port_remastered_import.cpp platform/port_remastered_effect.cpp
         INCLUDES platform/include)
+    mp_port_test(port_queen_barrier_validate_tests
+        SOURCES tests/port_queen_barrier_validate.cpp
+            platform/port_queen_barrier_validate.cpp
+            platform/port_remastered_effect_convert.cpp platform/port_remastered_effect.cpp
+        INCLUDES platform/include include extern/aurora/include
+        DEFINITIONS TARGET_PC VERSION=0)
     # Where the built-in Remastered import lives and how a scan picks it up
     # (port_remastered_storage.h): policy plus the folder walk, so it gets a scratch folder of its own.
     mp_port_test(port_remastered_storage_tests
@@ -1385,6 +1394,12 @@ if(MP_BUILD_TESTS)
         SOURCES tests/port_vfx_opacity.cpp
         INCLUDES platform/include extern/aurora/include
         DEFINITIONS TARGET_PC VERSION=0)
+    # VFX_BarrierShield's fragment maths: a scalar golden reference for the breakup, the motion, the
+    # .45 sawtooth boundary and the chromatic scene samples (header-only: the maths is the shader's).
+    mp_port_test(port_vfx_barrier_tests
+        SOURCES tests/port_vfx_barrier.cpp
+        INCLUDES platform/include extern/aurora/include
+        DEFINITIONS TARGET_PC VERSION=0)
     mp_port_test(port_vfx_material_tests
         SOURCES tests/port_vfx_material.cpp
             src/Kyoto/Particles/CPortVfxMat.cpp platform/port_vfx_particles.cpp
@@ -1447,6 +1462,11 @@ if(MP_BUILD_TESTS)
         INCLUDES platform/include)
     mp_port_test(port_third_person_body_tests
         SOURCES tests/port_third_person_body.cpp
+        INCLUDES platform/include)
+    # The order a mod reload runs in: the port's own model holders go before the PAKs reopen
+    # (port_world_holders.h), or the next world takes this one's models from the pool.
+    mp_port_test(port_world_holders_tests
+        SOURCES tests/port_world_holders.cpp platform/port_world_holders.cpp
         INCLUDES platform/include)
     # --- Dread Samus import (step 6: the dread-samus mod) ---
     # The converter's explicit-weights path, the synthetic Model of a re-skinned body, the retail
@@ -1554,6 +1574,13 @@ if(MP_BUILD_TESTS)
             COMMAND ${Python3_EXECUTABLE} -I ${CMAKE_CURRENT_SOURCE_DIR}/tests/port_vfx_opacity_wiring.py
                     ${CMAKE_CURRENT_SOURCE_DIR})
         set_tests_properties(port_vfx_opacity_wiring PROPERTIES TIMEOUT 15 LABELS port)
+        # BarrierShield (bit 29) is wired the same way everywhere: the shader branch, both fog
+        # exclusions, both slot reads, the scene gate, the CCH rows and the time, the vertex
+        # attribute, the mesh feed and readiness, and the converter's recipe and MFC0 gate.
+        add_test(NAME port_vfx_barrier_wiring
+            COMMAND ${Python3_EXECUTABLE} -I ${CMAKE_CURRENT_SOURCE_DIR}/tests/port_vfx_barrier_wiring.py
+                    ${CMAKE_CURRENT_SOURCE_DIR})
+        set_tests_properties(port_vfx_barrier_wiring PROPERTIES TIMEOUT 15 LABELS port)
         # Every command in the console's table is documented in docs/CONSOLE.md.
         add_test(NAME port_console_docs
             COMMAND ${Python3_EXECUTABLE} -I ${CMAKE_CURRENT_SOURCE_DIR}/tests/port_console_docs.py
