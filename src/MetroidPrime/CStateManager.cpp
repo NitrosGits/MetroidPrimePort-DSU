@@ -7,7 +7,9 @@
 #include "port_debug.h"
 #include "port_env.h"
 #include "port_freecam.h"
+#include "port_third_person.h"
 #include "port_photo.h"
+#include "port_pipeline_context.h"
 #include "port_discord.h"
 #include "port_hold_toggle.h"
 #include "port_livesplit.h"
@@ -73,6 +75,7 @@
 #include "MetroidPrime/ScriptObjects/CSnakeWeedSwarm.hpp"
 #include "MetroidPrime/ScriptObjects/CScriptSpawnPoint.hpp"
 #include "MetroidPrime/ScriptObjects/CScriptSpecialFunction.hpp"
+#include "MetroidPrime/ScriptObjects/CScriptMidi.hpp"
 #include "MetroidPrime/ScriptObjects/CScriptStreamedMusic.hpp"
 #include "MetroidPrime/ScriptObjects/CScriptTrigger.hpp"
 #include "MetroidPrime/ScriptObjects/CScriptWater.hpp"
@@ -245,7 +248,7 @@ CEntity* PortTempleObject(CStateManager& mgr, uint id) {
 // and stops it only if the destination room has no music at all.
 bool sPortWarpMusicPending = false;
 
-// The active streamed music `ent` plays from `state` (any state when
+// The active streamed music or MIDI `ent` plays from `state` (any state when
 // `anyState`), or null.
 CEntity* PortPlayedMusic(CStateManager& mgr, const CEntity& ent, EScriptObjectState state,
                          bool anyState) {
@@ -259,6 +262,9 @@ CEntity* PortPlayedMusic(CStateManager& mgr, const CEntity& ent, EScriptObjectSt
       CScriptStreamedMusic* const music = dynamic_cast< CScriptStreamedMusic* >(ent);
       if (music != nullptr && music->GetActive() && music->IsLoopingMusic())
         return music;
+      CScriptMidi* const midi = dynamic_cast< CScriptMidi* >(ent);
+      if (midi != nullptr && midi->GetActive())
+        return midi;
     }
   }
   return nullptr;
@@ -333,6 +339,9 @@ void PortStartStateLoadMusic(CStateManager& mgr) {
   if (!PortStartAreaMusic(mgr) && !sPortStateLoadSameWorld)
     CStreamAudioManager::StopAll();
 }
+
+// The room restore played the saved music itself.
+void PortEndStateLoadMusic() { sPortStateLoadMusic = false; }
 
 namespace {
 
@@ -1686,6 +1695,9 @@ void CStateManager::Update(float dt) {
 
   if (x904_gameState != kGS_SoftPaused) {
     x870_cameraManager->Update(dt, *this);
+#ifdef TARGET_PC
+    PortThirdPerson::Update(*this, dt);
+#endif
   }
 
   while (xf76_lastRelay != kInvalidUniqueId) {
@@ -3709,6 +3721,7 @@ void CStateManager::DrawWorld() const {
   if (morphingPlayerVisible) {
 #ifdef TARGET_PC
     CPortActorRenderScope presented(*x84c_player);
+    CPortPipelineContextScope globalPipelines(AURORA_PIPELINE_CONTEXT_GLOBAL);
 #endif
     x84c_player->Render(*this);
   }
@@ -3811,9 +3824,14 @@ void CStateManager::DrawWorld() const {
     }
 #endif
 #ifdef TARGET_PC
-    if (!PortViewModel::Active() && !PortFreeCam::Active())
+    if (!PortViewModel::Active() && !PortFreeCam::Active() && !PortThirdPerson::Active())
 #endif
-    x84c_player->RenderGun(*this, x870_cameraManager->GetGlobalCameraTranslation(*this));
+    {
+#ifdef TARGET_PC
+      CPortPipelineContextScope globalPipelines(AURORA_PIPELINE_CONTEXT_GLOBAL);
+#endif
+      x84c_player->RenderGun(*this, x870_cameraManager->GetGlobalCameraTranslation(*this));
+    }
 #ifdef TARGET_PC
     if (gunFov) {
       CGraphics::SetProjectionState(gunProj);
@@ -3848,6 +3866,9 @@ void CStateManager::DrawWorld() const {
   }
 
   DrawDebugStuff();
+#ifdef TARGET_PC
+  CPortPipelineContextScope globalPipelines(AURORA_PIPELINE_CONTEXT_GLOBAL);
+#endif
   RenderCamerasAndAreaLights();
   ResetViewAfterDraw(backupViewport, backupViewMatrix);
   DrawE3DeathEffect();

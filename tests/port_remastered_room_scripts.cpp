@@ -379,22 +379,38 @@ Fixture::Comp EffectActor(int genp, bool vars = false) {
   return c;
 }
 
-ScriptObject RetailObject(uint32_t id, uint8_t type, Vec3 pos, std::vector<uint32_t> targets = {}) {
+// An Effect object's properties as the room reader hands them over: nine four-byte ones the
+// import does not read, then the object's own PART at byte 36 (big endian), which is where it
+// compares a matched actor's GENP with it (port_remastered_room_effects.cpp).
+Bytes ObjectProps(uint32_t part) {
+  Bytes props(36, 0);
+  for (int shift = 24; shift >= 0; shift -= 8) {
+    props.push_back(uint8_t(part >> shift));
+  }
+  return props;
+}
+
+ScriptObject RetailObject(uint32_t id, uint8_t type, Vec3 pos, std::vector<uint32_t> targets = {},
+                          uint32_t ownPart = 0) {
   ScriptObject o;
   o.id = id;
   o.type = type;
   o.hasPos = true;
   o.pos = pos;
   o.targets = std::move(targets);
+  if (ownPart != 0) {
+    o.props = ObjectProps(ownPart);
+  }
   return o;
 }
 
 void TestRoomEffects() {
   // 0 added (layer 1, with a variable), 1 matched to a retail object, 2 connected (3 links to it),
-  // 4 no GENP, 5 a GENP with no PART, 6 on a layer no entity matched.
+  // 4 no GENP, 5 a GENP with no PART, 6 on a layer no entity matched, 7 matched with particle
+  // variables (its retail object takes them).
   Fixture f;
   f.comps = {EffectActor(0, true), EffectActor(1), EffectActor(0), Plain(kRelay, {{2, kEventRelayFired, kActionAction}}),
-             EffectActor(-1), EffectActor(2), EffectActor(0)};
+             EffectActor(-1), EffectActor(2), EffectActor(0), EffectActor(3, true)};
   f.comps[0].pos[0] = 1.f;
   f.comps[0].pos[1] = 2.f;
   f.comps[0].pos[2] = 3.f;
@@ -405,13 +421,17 @@ void TestRoomEffects() {
   const Vec3 w = Apply(area.xf, MulR2G({1, 2, 3}));
   const Vec3 near{w[0] + 1, w[1], w[2]};
   // 0 near the added one: replaced. 1 far. 2 near but a retail connection reaches it. 3 sends
-  // that. 4 the one actor 1 matched.
+  // that. 4 the one actor 1 matched, whose GENP maps to its own PART, so it keeps it. 5 the one
+  // actor 7 matched, which has no PART of its own and takes Remastered's.
+  constexpr uint32_t kOwnRetailPart = 0x12345678;  // the PART actor 1's GENP maps to
   area.objects = {RetailObject(0x041A0010, 7, near), RetailObject(0x041A0011, 7, {w[0] + 50, w[1], w[2]}),
                   RetailObject(0x041A0012, 7, near), RetailObject(0x041A0013, 0x15, near, {0x041A0012}),
-                  RetailObject(0x041A0014, 7, near)};
+                  RetailObject(0x041A0014, 7, near, {}, kOwnRetailPart),
+                  RetailObject(0x041A0015, 7, {w[0] + 50, w[1], w[2]})};
   SceneryScripts scripts;
   scripts.layer[int(f.Entity(0))] = 1;
   scripts.retail[int(f.Entity(1))] = 4;
+  scripts.retail[int(f.Entity(7))] = 5;
   std::map<std::string, Bytes> written;
   RoomIO io;
   io.write = [&](const std::string& name, const Bytes& data) {
@@ -419,11 +439,15 @@ void TestRoomEffects() {
     return true;
   };
   io.effect = [](const std::array<uint8_t, 16>& genp) -> uint32_t {
+    if (genp == SwapUuid(Guid(101).data())) {
+      return kOwnRetailPart;  // the object's own PART: it keeps its retail effect
+    }
     return genp == SwapUuid(Guid(102).data()) ? 0 : 0xFE000000u | genp[0];
   };
   const std::string line = WriteRoomEffects("room", p.room, area.mrea, area, scripts, io);
-  CHECK_MSG(line == "  room: 1 effect actor(s) added, 1 retail effect(s) replaced, 1 connected and left out, 1 matched a "
-                    "retail object (0 of them with an effect of Remastered's own), 2 without a PART, 1 on an unknown layer",
+  CHECK_MSG(line == "  room: 1 effect actor(s) added, 1 retail effect(s) replaced, 1 retail effect(s) take "
+                    "Remastered's effect, 1 connected and left out, 2 matched a retail object (1 of them still on the "
+                    "retail PART), 2 without a PART, 1 on an unknown layer",
             line.c_str());
   REQUIRE_MSG(written.size() == 1 && written.count("1A2B3C4D.roomfx") == 1, "one .roomfx, named by the MREA");
   PortRoomEffects::File file;
@@ -443,15 +467,113 @@ void TestRoomEffects() {
   const PortRoomEffects::Variable& v = file.layers[0].vars[0][0];
   CHECK(v.real == 0.65f && std::equal(v.guid.begin(), v.guid.end(), Guid(200).begin()));
 
+  // The object actor 7 matched takes the actor's PART (it has no PART of its own) and its
+  // particle variable, and is left out of the add-ons.
+  REQUIRE_MSG(file.overrides.size() == 1, "one override");
+  const PortRoomEffects::Override& over = file.overrides[0];
+  CHECK(over.id == 0x041A0015 && over.part == (0xFE000000u | SwapUuid(Guid(103).data())[0]));
+  REQUIRE(over.vars.size() == 1);
+  CHECK(over.vars[0].real == 0.65f && std::equal(over.vars[0].guid.begin(), over.vars[0].guid.end(), Guid(200).begin()));
+
   // A retail object already in the add-on range: nothing written.
   written.clear();
   Area taken = area;
   taken.objects.push_back(RetailObject(PortRoomEffects::AddOnId(0, 0x1A, 3), 7, near));
   const std::string refused = WriteRoomEffects("room", p.room, area.mrea, taken, scripts, io);
   CHECK_MSG(refused.find("is in the add-on id range") != std::string::npos && written.empty(), refused.c_str());
+  // A GENP several retail PARTs share: the object matched to the actor keeps its own retail id
+  // (the mod converted the GENP under it) and takes the actor's particle variables, which set
+  // what differs between them (the lava spit's big and small).
+  {
+    Fixture g;
+    g.comps = {EffectActor(0, true)};
+    const Parsed q(g);
+    constexpr uint32_t kSharedPart = 0x99998888;  // the object's own PART, one the GENP is shared with
+    Area shared = area;
+    shared.objects = {RetailObject(0x041A0016, 7, Apply(area.xf, MulR2G({0, 0, 0})), {}, kSharedPart)};
+    SceneryScripts sharedScripts;
+    sharedScripts.retail[int(g.Entity(0))] = 0;
+    std::map<std::string, Bytes> out;
+    RoomIO io2;
+    io2.write = [&](const std::string& name, const Bytes& data) {
+      out[name] = data;
+      return true;
+    };
+    io2.effect = [](const std::array<uint8_t, 16>&) -> uint32_t { return 0; };  // no PART under the GENP's id
+    io2.matched = [](const std::array<uint8_t, 16>& genp) -> std::vector<uint32_t> {
+      return genp == SwapUuid(Guid(100).data()) ? std::vector<uint32_t>{kSharedPart} : std::vector<uint32_t>{};
+    };
+    const std::string l = WriteRoomEffects("room", q.room, area.mrea, shared, sharedScripts, io2);
+    CHECK_MSG(l.find("1 retail effect(s) take Remastered's effect, 0 connected") != std::string::npos, l.c_str());
+    PortRoomEffects::File f2;
+    std::string e2;
+    REQUIRE_MSG(out.count("1A2B3C4D.roomfx") == 1 && PortRoomEffects::Parse(out["1A2B3C4D.roomfx"], f2, e2), e2.c_str());
+    REQUIRE_MSG(f2.overrides.size() == 1, "one override");
+    CHECK(f2.overrides[0].id == 0x041A0016 && f2.overrides[0].part == kSharedPart);
+    REQUIRE(f2.overrides[0].vars.size() == 1 && f2.overrides[0].vars[0].real == 0.65f);
+    CHECK_MSG(f2.layers.empty() && f2.skips.empty(), "nothing added, nothing skipped");
+  }
   // Without an effect lookup the stage writes nothing and says nothing.
   io.effect = nullptr;
   CHECK(WriteRoomEffects("room", p.room, area.mrea, area, scripts, io).empty() && written.empty());
+}
+
+Fixture::Comp Density(float intensity) {
+  Fixture::Comp c = Plain(kEnvFxDensityController);
+  Bytes v;
+  PutFloat(v, intensity);
+  c.props = Props().Add(kPropEnvFxIntensity, v).b;
+  return c;
+}
+
+// The density controller a RelayAutoFire reaches through Relays sets the intensity; one only a
+// trigger fires, or nothing, does not.
+void TestEnvFxIntensity() {
+  Fixture f;
+  // 0 controller 3.0 (a Relay's trigger fires it), 1 controller 5.0 (autofire 3 -> relay 2 -> 1),
+  // 2 Relay, 3 RelayAutoFire, 4 a TriggerMP1 -> relay 5 -> controller 0, 5 Relay, 6 inert
+  // controller 7.0.
+  f.comps = {Density(3.f),
+             Density(5.f),
+             Plain(kRelay, {{1, kEventRelayFired, kActionEnvFxApply}}),
+             Plain(kRelayAutoFire, {{2, 0x9a06ae6f, kActionRelayFire}}),
+             Plain(kTriggerMP1, {{5, kEventEntered, kActionRelayFire}}),
+             Plain(kRelay, {{0, kEventRelayFired, kActionEnvFxApply}}),
+             Density(7.f)};
+  {
+    const Parsed p(f);
+    std::vector<std::string> notes;
+    CHECK_MSG(EnvFxIntensity(p.room, notes) == 5.f, "envfx: the autofire chain's controller");
+    REQUIRE(notes.size() == 2);
+    CHECK_MSG(notes[0].find("#0") != std::string::npos && notes[0].find("not fired at load") != std::string::npos &&
+                  notes[0].find("F526FC2A") != std::string::npos,
+              notes[0].c_str());
+    CHECK_MSG(notes[1].find("#6") != std::string::npos && notes[1].find("nothing fires it") != std::string::npos,
+              notes[1].c_str());
+  }
+  // A wrong action on the first hop breaks the chain: nothing fires at load.
+  f.comps[3].links[0].action = kActionCounterIncrement;
+  {
+    const Parsed p(f);
+    std::vector<std::string> notes;
+    CHECK_MSG(EnvFxIntensity(p.room, notes) == 1.f && notes.size() == 3, "envfx: no chain, intensity 1");
+  }
+  // Two Relays deep.
+  f.comps[3].links[0].action = kActionRelayFire;
+  f.comps.push_back(Plain(kRelay, {{2, kEventRelayFired, kActionRelayFire}}));
+  f.comps[3].links[0].target = 7;
+  {
+    const Parsed p(f);
+    std::vector<std::string> notes;
+    CHECK_MSG(EnvFxIntensity(p.room, notes) == 5.f, "envfx: two relays deep");
+  }
+  // A cycle of relays ends.
+  f.comps[2].links.push_back({7, kEventRelayFired, kActionRelayFire});
+  {
+    const Parsed p(f);
+    std::vector<std::string> notes;
+    CHECK_MSG(EnvFxIntensity(p.room, notes) == 5.f, "envfx: relay cycle");
+  }
 }
 
 }  // namespace
@@ -461,6 +583,7 @@ int main() {
   TestMasterTrigger();
   TestMasterCameraWater();
   TestRoomEffects();
+  TestEnvFxIntensity();
   if (port_test::Failures() == 0) {
     std::printf("port_remastered_room_scripts_tests: ok\n");
   }

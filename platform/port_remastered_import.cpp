@@ -1,5 +1,6 @@
 #include "port_remastered_import_internal.h"
 #include "port_remastered_effect_convert.h"
+#include "port_envfx_file.h"
 #include "port_retail_placement.h"
 
 namespace PortRemastered {
@@ -736,6 +737,51 @@ int ImportMovies(const Remastered& remastered, const fs::path& folder, const Mov
     fs::remove(folder, ec); // only if nothing is in it
   }
   return written;
+}
+
+// A plain 2D BC6H texture as the .dds the converter writes for it (ConvertIO::hdrDds): under BC
+// its blocks as they are, from the first mip within maxEdge; without BC (ASTC phones) RGBA16F,
+// at most 2048 on its longest edge, each level decoded from the source's own mip and any the
+// file lacks halved from the last. Linear either way, as BC6H is.
+bool EncodeHdrDds(const TxtrMipsBc6h& tex, int maxEdge, TextureFormat format, std::vector<uint8_t>& dds,
+                  std::string& error) {
+  uint32_t limit = maxEdge > 0 ? uint32_t(maxEdge) : 0xFFFFFFFFu;
+  if (format != TextureFormat::BC) {
+    limit = std::min(limit, 2048u);
+  }
+  size_t start = 0;
+  while (start + 1 < tex.mips.size() && std::max(tex.width >> start, tex.height >> start) > limit) {
+    ++start;
+  }
+  const uint32_t w = std::max(tex.width >> start, 1u), h = std::max(tex.height >> start, 1u);
+  if (w % 4 != 0 || h % 4 != 0) {
+    error = std::to_string(w) + "x" + std::to_string(h) + " is not whole blocks";
+    return false;
+  }
+  if (format == TextureFormat::BC) {
+    const std::vector<std::vector<uint8_t>> mips(tex.mips.begin() + std::ptrdiff_t(start), tex.mips.end());
+    dds = EncodeDdsBc6h(w, h, tex.isSigned, mips);
+  } else {
+    std::vector<std::vector<uint16_t>> mips;
+    for (uint32_t m = 0;; ++m) {
+      const uint32_t mw = std::max(w >> m, 1u), mh = std::max(h >> m, 1u);
+      if (start + m < tex.mips.size()) {
+        mips.emplace_back(size_t(mw) * mh * 4);
+        DecodeBc6hImage(tex.mips[start + m].data(), mw, mh, tex.isSigned, mips.back().data());
+      } else {
+        mips.push_back(HalveRgba16f(mips.back(), std::max(w >> (m - 1), 1u), std::max(h >> (m - 1), 1u)));
+      }
+      if (mw == 1 && mh == 1) {
+        break;
+      }
+    }
+    dds = EncodeDdsRgba16f(w, h, mips);
+  }
+  if (dds.empty()) {
+    error = "the mips do not match the texture's size";
+    return false;
+  }
+  return true;
 }
 
 // Each worker holds a whole model, its decoded buffers and a few RGBA
@@ -1646,8 +1692,17 @@ void Run(std::string nspPath, std::string keysPath, int threads, fs::path stagin
         decoded.height = int(image.height);
         decoded.rgba = std::move(image.rgba);
         decoded.srgb = image.srgb;
+        decoded.hdr = image.format == kTxtrFormatBc6hUfloat || image.format == kTxtrFormatBc6hSfloat;
         return true;
       });
+    };
+    io.hdrDds = [&](const ModelUuid& id, int maxEdge, std::vector<uint8_t>& dds, std::string& hdrError) {
+      std::vector<uint8_t> raw;
+      TxtrMipsBc6h tex;
+      if (!remastered.ReadTexture(id, raw, hdrError) || !ReadTxtrMipsBc6h(raw.data(), raw.size(), tex, hdrError)) {
+        return false;
+      }
+      return EncodeHdrDds(tex, maxEdge, WantedTextureFormat(), dds, hdrError);
     };
     io.volume = [&](const ModelUuid& id, Image& out, std::string& volumeError) {
       std::vector<uint8_t> raw, slices;
@@ -2583,6 +2638,19 @@ void Run(std::string nspPath, std::string keysPath, int threads, fs::path stagin
         const std::optional<uint32_t> carried = EffectRetailId(property);
         return carried && retail.HasId(*carried) ? *carried : 0;
       };
+      // The retail PARTs the effects step wrote this GENP under by its own table (one GENP can
+      // stand for two, the lava spit's): only those the mod has a PART for, or the retail object
+      // would be pointed at nothing.
+      io.matched = [&](const std::array<uint8_t, 16>& genp) {
+        std::vector<uint32_t> out;
+        for (uint32_t id : MatchedRetailEffects(genp)) {
+          std::error_code ec;
+          if (fs::exists(staging / PathFromString(Hex8(id) + ".PART"), ec)) {
+            out.push_back(id);
+          }
+        }
+        return out;
+      };
       io.wantsGeometry = WantsGeometry;
       io.retailModel = [&](const RetailPlacement& placement) {
         std::lock_guard<std::mutex> lock(retailMutex);
@@ -3333,6 +3401,85 @@ void Run(std::string nspPath, std::string keysPath, int threads, fs::path stagin
         AddLine("thermal visor gradient: " + (lutError.empty() ? std::string("unexpected size") : lutError));
       }
     }
+    // The EnvironmentFX textures (port_envfx_file.h) as envfx.bin: the rain, snow and underwater
+    // flakes and the fade gradient the native EnvFX draw samples. All four or no file.
+    {
+      // A GUID string as the bytes of a ModelUuid, in the order written, else the mixed-endian one.
+      const auto uuids = [](const char* text, ModelUuid& plain, ModelUuid& swapped) {
+        size_t n = 0;
+        for (const char* c = text; *c != 0 && n < 16; ++c) {
+          if (*c == '-') {
+            continue;
+          }
+          const auto hex = [](char h) { return h <= '9' ? h - '0' : (h | 0x20) - 'a' + 10; };
+          plain[n++] = uint8_t(hex(c[0]) << 4 | hex(c[1]));
+          ++c;
+        }
+        swapped = plain;
+        std::swap(swapped[0], swapped[3]);
+        std::swap(swapped[1], swapped[2]);
+        std::swap(swapped[4], swapped[5]);
+        std::swap(swapped[6], swapped[7]);
+      };
+      PortEnvFx::Assets envfx;
+      std::string envfxError;
+      for (int i = 0; i < 4 && envfxError.empty(); ++i) {
+        const char* guid = i == 0 ? PortEnvFx::kGradientGuid : PortEnvFx::kFlakeGuid[i - 1];
+        PortEnvFx::Image& image = i == 0 ? envfx.gradient : envfx.flake[i - 1];
+        ModelUuid plain{};
+        ModelUuid swapped{};
+        uuids(guid, plain, swapped);
+        std::vector<uint8_t> raw;
+        std::string error;
+        if (!remastered.ReadTexture(plain, raw, error) && !remastered.ReadTexture(swapped, raw, error)) {
+          envfxError = std::string(guid) + ": " + error;
+          break;
+        }
+        if (i == 0) {
+          TxtrImage gradient;
+          if (!DecodeTxtr(raw.data(), raw.size(), gradient, error)) {
+            envfxError = std::string(guid) + ": " + error;
+            break;
+          }
+          // DecodeTxtr's R8 is already (v, v, v, 255) or (v, 0, 0, 255); the draw reads .r.
+          image.width = gradient.width;
+          image.height = gradient.height;
+          image.layers = 1;
+          image.rgba.assign(gradient.rgba.size(), 0);
+          for (size_t p = 0; p + 3 < gradient.rgba.size(); p += 4) {
+            image.rgba[p] = gradient.rgba[p];
+            image.rgba[p + 3] = 255;
+          }
+          continue;
+        }
+        if (!DecodeTxtrLayersRgba8(raw.data(), raw.size(), image.width, image.height, image.layers, image.rgba,
+                                   error)) {
+          // The underwater flake may be a plain 2D texture: one layer.
+          TxtrImage single;
+          if (!DecodeTxtr(raw.data(), raw.size(), single, error)) {
+            envfxError = std::string(guid) + ": " + error;
+            break;
+          }
+          image.width = single.width;
+          image.height = single.height;
+          image.layers = 1;
+          image.rgba = std::move(single.rgba);
+        }
+      }
+      PortEnvFx::Assets check;
+      std::vector<uint8_t> file;
+      if (envfxError.empty()) {
+        file = PortEnvFx::Serialize(envfx);
+        if (!PortEnvFx::Parse(file.data(), file.size(), check, envfxError)) {  // the sizes the draw expects
+          envfxError = "unexpected size: " + envfxError;
+        }
+      }
+      if (!envfxError.empty()) {
+        AddLine("EnvironmentFX textures: " + envfxError);
+      } else if (!makeIO(0, hudFolder).write("envfx.bin", file)) {
+        AddLine("EnvironmentFX textures: cannot write");
+      }
+    }
     if (hudFrames == 0 && compassModels == 0) {
       fs::remove_all(hudFolder, ec);
     }
@@ -3871,10 +4018,14 @@ bool StartInstall() {
 bool ApplyPendingImport() {
   const fs::path staging = StagingFolder();
   // A running import is still writing there.
-  if (staging.empty() || ImportStatus().running) {
+  if (ImportStatus().running) {
     return false;
   }
-  return MoveIntoPlace(staging);
+  const bool dread = ApplyPendingDreadImport();
+  if (staging.empty()) {
+    return dread;
+  }
+  return MoveIntoPlace(staging) || dread;
 }
 
 void RemoveLegacyImport() {

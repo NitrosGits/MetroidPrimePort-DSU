@@ -8,6 +8,7 @@
 #include "port_debug.h"
 #include "port_gyro_motion.h"
 #include "port_photo.h"
+#include "port_third_person.h"
 #include "port_pointer.h"
 #include "port_room_geo.h"
 #include "port_log.h"
@@ -53,6 +54,12 @@ struct SettingKey {
 };
 
 void WriteBool(std::ostream& out, bool value) { out << (value ? 1 : 0); }
+
+// dynamic_res, the old key, was saved as 1 with auto render scale too, where it did
+// nothing; with auto it now runs. Read apart, and settled in ApplySettingsText once the
+// whole text (and its render_scale) is in: only on a fixed scale does it stay on.
+int sLegacyDynamicRes = -1; // -1: not in the text
+bool sDynamicResRead = false; // dynamic_resolution, the new key, was
 
 // hud_opacity_*: a percent, or "visor" to follow the game's Visor Opacity.
 void ReadHudOpacity(PortDebug::HudOpacityPart part, const std::string& value) {
@@ -224,6 +231,17 @@ const SettingKey kSettingKeys[] = {
      },
      false, "ff8000", ""},
     BoolKey< &sHideHelmet >("hide_helmet"),
+    {"third_person", [](const std::string& value) { PortThirdPerson::SetEnabled(ParseBool(value)); },
+     [](std::ostream& out) { WriteBool(out, PortThirdPerson::Enabled()); }, false, "1", "0"},
+    {"third_person_distance",
+     [](const std::string& value) { PortThirdPerson::SetDistance(std::strtof(value.c_str(), nullptr)); },
+     [](std::ostream& out) { out << PortThirdPerson::GetParams().distance; }, false, "2.5", "4"},
+    {"third_person_shoulder",
+     [](const std::string& value) { PortThirdPerson::SetShoulder(std::strtof(value.c_str(), nullptr)); },
+     [](std::ostream& out) { out << PortThirdPerson::GetParams().shoulder; }, false, "0.5", "-0.5"},
+    {"third_person_height",
+     [](const std::string& value) { PortThirdPerson::SetHeight(std::strtof(value.c_str(), nullptr)); },
+     [](std::ostream& out) { out << PortThirdPerson::GetParams().height; }, false, "0.5", "0"},
     BoolKey< &sHideVisorEffects >("hide_visor_effects"),
     BoolKey< &sRevealMap >("reveal_map"),
     {"map_pickups",
@@ -250,6 +268,14 @@ const SettingKey kSettingKeys[] = {
     BoolKey< &sSkippableCutscenes >("skippable_cutscenes"),
     BoolKey< &sBeamDoorsStayUnlocked >("beam_doors_stay_unlocked"),
     BoolKey< &sStackBeams >("stack_beams"),
+    {"walk_speed",
+     [](const std::string& value) {
+       const int s = std::atoi(value.c_str());
+       if (s >= PortDebug::kWalkSpeedMin && s <= PortDebug::kWalkSpeedMax) {
+         sWalkSpeed = s;
+       }
+     },
+     [](std::ostream& out) { out << sWalkSpeed; }, false, "50", "200"},
     BoolKey< &sRevision100Compatibility >("revision_100_compatibility"),
     // Normalised on the way in (NormalizeEmulatorFolder), so not sampled.
     {"emulator_folder", [](const std::string& value) { PortGci::SetEmulatorFolder(value); },
@@ -409,15 +435,22 @@ const SettingKey kSettingKeys[] = {
        }
      },
      [](std::ostream& out) { out << sRenderScale; }, false, "0.5", "2"},
-    BoolKey< &sDynamicRes >("dynamic_res"),
+    {"dynamic_resolution",
+     [](const std::string& value) {
+       sDynamicRes = ParseBool(value);
+       sDynamicResRead = true;
+     },
+     [](std::ostream& out) { WriteBool(out, sDynamicRes); }, false, "1", "0"},
+    {"dynamic_res", [](const std::string& value) { sLegacyDynamicRes = ParseBool(value) ? 1 : 0; }, nullptr, false,
+     nullptr, nullptr},
     {"dynamic_res_target",
-     [](const std::string& value) { sDynamicResTarget = std::clamp(std::atoi(value.c_str()), 0, 240); },
+     [](const std::string& value) { sDynamicResTarget = std::clamp(std::atoi(value.c_str()), 0, kFpsCapMax); },
      [](std::ostream& out) { out << sDynamicResTarget; }, false, "0", "60"},
     {"dynamic_res_min",
      [](const std::string& value) {
        const float f = static_cast< float >(std::atof(value.c_str()));
        if (std::isfinite(f)) {
-         sDynamicResMin = std::clamp(f, 0.5f, 1.f);
+         sDynamicResMin = std::clamp(f, PortDebug::kDynamicResMinLowest, 4.f);
        }
      },
      [](std::ostream& out) { out << sDynamicResMin; }, false, "0.5", "0.75"},
@@ -460,6 +493,7 @@ const SettingKey kSettingKeys[] = {
      [](std::ostream& out) { out << PortRoomGeo::LodDistance(); }, false, "0.5", "2"},
     {nullptr, nullptr, [](std::ostream& out) { PortInput::WriteControlSettings(out); }, false, nullptr, nullptr},
     BoolKey< &sInvulnerable >("invulnerable"),
+    BoolKey< &sPhazonBeamCheat >("cheat_phazon_beam"),
     // Not "log_file": builds from before the log was on by default wrote
     // log_file=0 into every settings file, which kept it off after an update.
     BoolKey< &sLogFile >("logging"),
@@ -509,6 +543,8 @@ bool ApplySetting(const std::string& key, const std::string& value) {
 // Applies the key=value lines of a settings file. Only whole-line comments:
 // values are written raw, and a path may contain '#'.
 void ApplySettingsText(std::istream& text) {
+  sLegacyDynamicRes = -1;
+  sDynamicResRead = false;
   std::string line;
   while (std::getline(text, line)) {
     const size_t first = line.find_first_not_of(" \t");
@@ -524,6 +560,9 @@ void ApplySettingsText(std::istream& text) {
     if (!key.empty()) {
       ApplySetting(key, value);
     }
+  }
+  if (sLegacyDynamicRes >= 0 && !sDynamicResRead) {
+    sDynamicRes = sLegacyDynamicRes == 1 && sRenderScale > 0.f;
   }
 }
 

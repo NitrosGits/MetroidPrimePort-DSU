@@ -80,11 +80,28 @@ namespace ImportStage {
 // 58: the beam glow (kind 9) is drawn as kind 9 without vertex colours too (no ramp mean).
 // 59: a retail TEV material's diffuse slot takes the Remastered base map as authored (no AO,
 //     cavity or sheen baked into it).
-inline constexpr int kConverter = 59;
+// 60: the materials report has the mesh class, the blend written and the texcoord slots.
+// 61: a retail model's materials get a texcoord slot for every Remastered set (no fold onto 0).
+// 62: a retail model's PBR material blends as its mesh class does, not as its retail material.
+// 63: a retail model's materials read vertex colour as a room's do (tinted, or a vertex-colour kind).
+// 64: ... and its alpha, unlit, mask and height as a room's, sorted and depth-written by its class.
+// 65: ... and its kind, macro and second layer as a room's (no kind dropped).
+// 66: a retail model's fx material with a port kind draws as its Remastered shader, not its retail TEV.
+// 67: 5854e91b and bda080c0 draw as Remastered's unlit Surface with a reflection cube (kind 38).
+// 68: af330de4 draws as Remastered's unlit DIFT x DIFC x vertex colour (kind 39).
+// 69: 664ee5ca draws as Remastered's unlit matcap, DIFT x DIFC + REFS x REFV (kind 40).
+// 70: 67053ffe draws as Remastered's unlit METL-weighted BCLR + ICAN (kind 41).
+// 71: 8c7a939f draws as kind 25 (its maths), 1fbafbca as kind 42 (25 plus ICAN x ICNC).
+// 72: 084a8db5 draws as kind 43 (HoloGlass less TCH1/TCH2/DIFC).
+// 73: 0c0b6119 draws as kind 31 (fb2bc671's maths, DIFC for ICNC).
+// 74: every retail fx material draws through its Remastered shader (kShaderFxNoKind gone).
+inline constexpr int kConverter = 74;
 // What a converted texture holds: port_remastered_image/txtr/dds/astc, and Converter's Get and
 // Cube. Each converted texture is kept across imports under its tag and this number, so a
 // kConverter bump re-imports the models without converting their textures again.
-inline constexpr int kTextures = 4;
+// 5: a BC6H colour map (the skies) is written as BC6H (RGBA16F without BC), its 8-bit
+//    form decoded by value instead of by the halves' high bytes.
+inline constexpr int kTextures = 5;
 // 17: the inventory and cinematic guns draw the animated beam glow (kConverter 58).
 // 16: placements bake as one only when float-identical; any difference places per object.
 // 15: a per-instance retail model converts once, untransformed; retailplacements.bin places
@@ -96,7 +113,7 @@ inline constexpr int kTextures = 4;
 // 11: the Elite Quarters stasis tank 3C26F42B is in the table.
 // 10: a plain cutout over a retail fx material is drawn opaque, cut by the shader.
 // 9: a ColorUnlit mesh (the door shields) gets a back copy.
-inline constexpr int kModels = 17;     // the table's models, their looks and the ANCS copies
+inline constexpr int kModels = 18;     // the table's models, their looks and the ANCS copies
 // 63: ELPS reads its CNST surface flag; the system tween is 0 only at a 0x1000000 lifetime.
 // 62: NEGT, CRCV, SPEV, ELPS, ROTV, PNCV, KEYF, SLTW, CRLN octaves, KESP, one-stop GRAD, PAP0/9,
 //     ADV9 and IAV0..3 are converted; PLNV counts come from MAXP.
@@ -135,7 +152,12 @@ inline constexpr int kModels = 17;     // the table's models, their looks and th
 // 95: BLIT 1 (a lit sprite takes the room's baked probe) is the port-only PBLT 1.
 // 97: a sprite/swoosh/ELC2 VMAT takes its MATI's EBlendMode over the PBDM/SBDM/EBDM row (Fogged pins the row's fog).
 // 98: a PART keeps its visor effect override data (PVSC/PVMC/PVTC/PVBS/PVDT).
-inline constexpr int kEffects = 99;    // port_remastered_effect_import and the particle converters
+// 100: missile and energy tank pickups paired (#loose-chpr, kMatchedEffects).
+// 101: the lava spit's two PARTs paired with one GENP (#shared-genp), the actor's variables on them.
+// 102: visor rain splash (VFX_VisorRain 0ec41df0, BC978532 paired).
+// 103: the FlickerBat's 0B9E48EB paired with 3b29b0b3 (#visual-inferred: inferred from the
+// look, not proven by any CHPR or other serialized reference).
+inline constexpr int kEffects = 103;   // port_remastered_effect_import and the particle converters
 // 20: two rooms matching one area write only the closer match's files, not the later room's.
 // 21: roomenv version 22, the world master's hints driven by its camera volumes (the table in every roomenv).
 // 22: a master's InventoryActivator fired by the camera going under water drives its hints (kSenderCameraWaterItem).
@@ -145,10 +167,13 @@ inline constexpr int kEffects = 99;    // port_remastered_effect_import and the 
 // 26: roomenv version 23, the world shift (the fog's noise is read in Remastered's world).
 // 28: retail model placements (RetailPlacement); their entities leave the room's geometry.
 // 29: a retail model's objects pair with its entities by order (RetailPlacement orient, entity).
-inline constexpr int kRooms = 30;      // port_remastered_room: roomenv/, .roomgeo, .roomliquid, .roomfx, water maps
+// 30: roomenv version 26, the EnvironmentFX colour intensity (a RelayAutoFire-fired density controller).
+// 34: a retail Effect object drawing a PART its GENP is shared with takes the actor's variables (the lava spit).
+inline constexpr int kRooms = 34;      // port_remastered_room: roomenv/, .roomgeo, .roomliquid, .roomfx, water maps
 inline constexpr int kRoomModels = 1;  // the rooms' own models and their levels of detail
 inline constexpr int kText = 1;        // port_remastered_text, and the font (port_remastered_font)
-inline constexpr int kHud = 8;         // port_remastered_hud, port_remastered_map
+// 9: envfx.bin, the EnvironmentFX flake textures (port_envfx_file.h).
+inline constexpr int kHud = 9;         // port_remastered_hud, port_remastered_map, envfx.bin
 inline constexpr int kMovies = 0;      // port_remastered_movie
 inline constexpr int kGallery = 0;     // the gallery pictures (port_gallery)
 }  // namespace ImportStage
@@ -615,5 +640,14 @@ bool StartInstall();
 // stdout, and installs the mod. The disc must be open. Returns the exit code.
 // `--import-remastered-movies` is StartMovieImport() the same way.
 int RunImportFromCommandLine(const std::string& nspPath, const std::string& keysPath, bool moviesOnly = false);
+
+// The Dread Samus import (port_dread_samus.h): Samus's Power/Varia/Gravity bodies from the user's
+// own Metroid Dread .nsp/.xci into <mods>/dread-samus, with the disc open. It shares this import's
+// state, cancelling and thread (ImportStatus, CancelImport, StopImport), so only one of the two runs
+// at a time; it installs itself when it ends, or at the next start (ApplyPendingImport) when a file
+// was in the way. MP_DREAD_ROMFS=<dir> reads an extracted RomFS instead of the image (development).
+bool StartDreadSamusImport(const std::string& nspPath, const std::string& keysPath);
+// `--import-dread-samus <nsp> [keys]`, as RunImportFromCommandLine. Returns the exit code.
+int RunDreadSamusImportFromCommandLine(const std::string& nspPath, const std::string& keysPath);
 
 }  // namespace PortRemastered

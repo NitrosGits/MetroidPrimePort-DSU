@@ -763,6 +763,31 @@ int main(int argc, char** argv) {
         aurora_dvd_close();
         return result;
     }
+    // --import-dread-samus <image.nsp|xci> [key file]: Samus's bodies from the user's own Metroid
+    // Dread into <mods>/dread-samus (port_dread_samus.h), without starting the game. The disc comes
+    // from MP_DISC or the path the game remembers. With MP_DREAD_ROMFS=<extracted RomFS> the image
+    // argument is ignored (pass "-").
+    if (argc >= 2 && std::strcmp(argv[1], "--import-dread-samus") == 0) {
+        if (argc < 3) {
+            std::fprintf(stderr, "usage: %s %s <image.nsp|xci> [key file]\n", argv[0], argv[1]);
+            return 2;
+        }
+        PortDebug::LoadDiscPath();
+        const char* disc = ResolveDiscPath(1, argv);
+        if (disc == nullptr || !aurora_dvd_open(disc)) {
+            std::fprintf(stderr, "cannot open the Metroid Prime disc image; set MP_DISC\n");
+            return 1;
+        }
+        const DVDDiskID* id = DVDGetCurrentDiskID();
+        int result = 1;
+        if (!IsSupportedDisc(id)) {
+            std::fprintf(stderr, "unsupported disc: %s\n", DescribeUnsupportedDisc(id).c_str());
+        } else {
+            result = PortRemastered::RunDreadSamusImportFromCommandLine(argv[2], argc >= 4 ? argv[3] : "");
+        }
+        aurora_dvd_close();
+        return result;
+    }
     // --import-pal-languages <image>: add a PAL disc's languages to a USA game
     // (port_pal_languages.h), without starting it.
     if (argc >= 2 && std::strcmp(argv[1], "--import-pal-languages") == 0) {
@@ -896,7 +921,26 @@ int main(int argc, char** argv) {
                            reason);
         }
     }
-    uint32_t pipelineEvictFrames = pipelineLazy ? 7200 : 0;
+    // Built pipelines stay until memory runs short (issue #187), areas left long ago included, so
+    // walking back is free. Lazy mode trims on the system's memory warnings (port_memory_log.cpp) and
+    // on a MemAvailable check every 5 s: under 1024 MiB available it releases what a minute of
+    // frames didn't draw, under 512 MiB all but what the last frames drew (GLOBAL pipelines stay).
+    // An 8 GB phone or tablet runs the game with 2-4 GB available; Android's own low-memory
+    // threshold (logged with each memory warning) is a few hundred MiB, so 1024 trims well before
+    // the system starts killing apps and 512 just above it. Overrides: MP_PIPELINE_TRIM_MIB and
+    // MP_PIPELINE_TRIM_SEVERE_MIB (0 turns a level off), MP_PIPELINE_EVICT (a fixed idle sweep).
+    uint32_t pipelineEvictFrames = 0;
+    if (pipelineLazy) {
+        const int trimMib = port::EnvInt("MP_PIPELINE_TRIM_MIB", 1024);
+        const int severeMib = port::EnvInt("MP_PIPELINE_TRIM_SEVERE_MIB", 512);
+        PortMemoryLog::SetPipelinePressure(trimMib, severeMib);
+        if (port::EnvString("MP_PIPELINE_TRIM_MIB") != nullptr ||
+            port::EnvString("MP_PIPELINE_TRIM_SEVERE_MIB") != nullptr) {
+            PortLog::Write("port: pipeline trim under %d MiB available, all idle under %d MiB "
+                           "(MP_PIPELINE_TRIM_MIB/MP_PIPELINE_TRIM_SEVERE_MIB)\n",
+                           trimMib, severeMib);
+        }
+    }
     if (const char* env = port::EnvString("MP_PIPELINE_EVICT"); env != nullptr && env[0] != '\0') {
         pipelineEvictFrames = static_cast<uint32_t>(std::strtoul(env, nullptr, 10));
         PortLog::Write("port: pipeline eviction %u frames (MP_PIPELINE_EVICT)\n", pipelineEvictFrames);

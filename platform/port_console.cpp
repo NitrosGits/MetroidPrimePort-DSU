@@ -17,6 +17,7 @@
 #include "port_debug.h"
 #include "port_discord.h"
 #include "port_freecam.h"
+#include "port_third_person.h"
 #include "port_gci.h"
 #include "port_photo.h"
 #include "port_pointer.h"
@@ -1562,6 +1563,14 @@ void CmdStats() {
     Out("frame: %.0f fps, %u draws (%u merged), %u PBR, %u passes, pipelines %u made %u waiting", aurora_get_fps(),
         stats->drawCallCount, stats->mergedDrawCallCount, CCubeMaterial::sPortPBRDraws, stats->renderPassCount,
         stats->createdPipelines, stats->queuedPipelines);
+    AuroraPipelineStats pipes{};
+    aurora_get_pipeline_stats(&pipes);
+    Out("pipeline cache: %llu skipped draws, misses %llu new %llu known %llu late; %llu prefetches queued %llu; "
+        "%u pinned, %u known",
+        static_cast< unsigned long long >(pipes.skippedDraws), static_cast< unsigned long long >(pipes.newMisses),
+        static_cast< unsigned long long >(pipes.knownMisses), static_cast< unsigned long long >(pipes.lateMisses),
+        static_cast< unsigned long long >(pipes.prefetches), static_cast< unsigned long long >(pipes.prefetchQueued),
+        pipes.pinned, pipes.known);
     Out("buffers: %.1f MiB vertices, %.1f indices, %.1f arrays, %.1f uniforms, %.1f texture uploads",
         stats->lastVertSize / 1048576.f, stats->lastIndexSize / 1048576.f, stats->lastStorageSize / 1048576.f,
         stats->lastUniformSize / 1048576.f, stats->lastTextureUploadSize / 1048576.f);
@@ -1953,6 +1962,37 @@ void CmdCollDump() {
   Finish();
 }
 
+// thirdperson [on|off] [distance <m>] [shoulder <m>] [height <m>]
+void CmdThirdPerson() {
+  static const char* const usage = "usage: thirdperson [on|off] [distance <m>] [shoulder <m>] [height <m>]";
+  for (size_t i = 1; i < sCmd.args.size(); ++i) {
+    const std::string arg = Lower(sCmd.args[i]);
+    float number = 0.f;
+    if (arg == "on" || arg == "off") {
+      PortThirdPerson::SetEnabled(arg == "on");
+    } else if ((arg == "distance" || arg == "shoulder" || arg == "height") && i + 1 < sCmd.args.size() &&
+               ParseFloat(sCmd.args[i + 1], number)) {
+      ++i;
+      if (arg == "distance") {
+        PortThirdPerson::SetDistance(number);
+      } else if (arg == "shoulder") {
+        PortThirdPerson::SetShoulder(number);
+      } else {
+        PortThirdPerson::SetHeight(number);
+      }
+    } else {
+      return Finish(usage);
+    }
+  }
+  const PortThirdPerson::Params p = PortThirdPerson::GetParams();
+  float cam[3] = {0.f, 0.f, 0.f};
+  PortThirdPerson::GetCameraPosition(cam);
+  Out("thirdperson %s (%s) distance %.2f shoulder %.2f height %.2f camera %.2f %.2f %.2f",
+      PortThirdPerson::Enabled() ? "on" : "off", PortThirdPerson::Active() ? "active" : "inactive",
+      p.distance, p.shoulder, p.height, cam[0], cam[1], cam[2]);
+  Finish();
+}
+
 // freecam [on|off|freeze on|off|player on|off|speed <n>|pos <x> <y> <z>|look <yaw> <pitch>]
 void CmdFreeCam() {
   static const char* const usage =
@@ -2333,6 +2373,18 @@ void CmdStackBeams() {
   Finish();
 }
 
+void CmdWalkSpeed() {
+  if (sCmd.args.size() > 1) {
+    const int value = std::atoi(sCmd.args[1].c_str());
+    if (value < PortDebug::kWalkSpeedMin || value > PortDebug::kWalkSpeedMax) {
+      return Finish("usage: walkspeed [50..200]");
+    }
+    PortDebug::SetWalkSpeed(value);
+  }
+  Out("walkspeed %d", PortDebug::WalkSpeed());
+  Finish();
+}
+
 void CmdSunShadow() {
   if (sCmd.args.size() > 1) {
     const std::string& v = sCmd.args[1];
@@ -2645,18 +2697,24 @@ void CmdMods() {
 }
 
 void CmdRemastered() {
-  // remastered [start <image.nsp|xci> [key file] | cancel]: the import of
-  // port_remastered_import.h, and how far it is.
+  // remastered [start <image.nsp|xci> [key file] | dread <dread.nsp|xci> [key file] | cancel]: the
+  // imports of port_remastered_import.h (Remastered, Dread Samus), and how far one is.
   const std::string verb = sCmd.args.size() > 1 ? Lower(sCmd.args[1]) : "";
   if (verb == "start" && sCmd.args.size() > 2) {
     const std::string keys = sCmd.args.size() > 3 ? sCmd.args[3] : PortRemastered::DefaultKeysPath();
     if (!PortDebug::StartRemasteredImport(sCmd.args[2], keys)) {
       return Finish("an import is already running, or there is no mods folder");
     }
+  } else if (verb == "dread" && sCmd.args.size() > 2) {
+    // The Dread Samus import (port_dread_samus.h); "-" for the image with MP_DREAD_ROMFS set.
+    const std::string keys = sCmd.args.size() > 3 ? sCmd.args[3] : PortRemastered::DefaultKeysPath();
+    if (!PortDebug::StartDreadSamusImport(sCmd.args[2], keys)) {
+      return Finish(PortRemastered::ImportStatus().message.c_str());
+    }
   } else if (verb == "cancel") {
     PortRemastered::CancelImport();
   } else if (!verb.empty()) {
-    return Finish("usage: remastered [start <image.nsp|xci> [key file] | cancel]");
+    return Finish("usage: remastered [start <image.nsp|xci> [key file] | dread <dread.nsp|xci> [key file] | cancel]");
   }
   const PortRemastered::ImportState state = PortRemastered::ImportStatus();
   Out("%s %d/%d failed %d: %s",
@@ -3830,6 +3888,9 @@ const CommandSpec kCommands[] = {
     {"freecam", CmdFreeCam, nullptr,
      "freecam [on|off|freeze on|off|player on|off|speed <n>|pos <x> <y> <z>|look <yaw> <pitch>]\n"
      "                           fly the view away from the player (HUD hidden; freeze holds the game still)"},
+    {"thirdperson", CmdThirdPerson, nullptr,
+     "thirdperson [on|off] [distance <m>] [shoulder <m>] [height <m>]\n"
+     "                           third-person gameplay camera (also third_person* settings)"},
     {"photo", nullptr, CmdPhoto,
      "photo [on|off|capture [1|2|4]|fov <n>|roll <n>|samus on|off|panel on|off|super 1|2|4|speed <n>]\n"
      "                           photo mode: frozen free camera with a roll and fov, saves a PNG"},
@@ -3885,6 +3946,8 @@ const CommandSpec kCommands[] = {
      "mapui [0|1]                 the map's extra legend entries and the Mark room prompt"},
     {"stackbeams", CmdStackBeams, nullptr,
      "stackbeams [0|1]           every shot also fires the other owned beams' projectiles (stack_beams)"},
+    {"walkspeed", CmdWalkSpeed, nullptr,
+     "walkspeed [50..200]        on-foot movement speed in percent (walk_speed); no argument prints it"},
     {"beamdoors", nullptr, CmdBeamDoors,
      "beamdoors [status|on|off|list [here]|unlock <door index|all>|reset]  the beam doors opened for good\n"
      "                           (beam_doors_stay_unlocked; on/off, unlock restyle the loaded doors)"},
